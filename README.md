@@ -1,119 +1,166 @@
-# Fallout 2 Community Edition
+# Fallout 2 (1998) — Miyoo Mini Plus / OnionOS Port
 
-Fallout 2 Community Edition is a fully working re-implementation of Fallout 2, with the same original gameplay, engine bugfixes, and some quality of life improvements, that works (mostly) hassle-free on multiple platforms.
+An unofficial port of [fallout2-ce](https://github.com/alexbatalov/fallout2-ce) (the community
+re-implementation of Fallout 2, with Sfall integration) to run as a standalone OnionOS Port on
+the **Miyoo Mini Plus** — a handheld with no 3D graphics acceleration.
 
-Popular Fallout 2 total conversion mods are partially supported. Original versions of Nevada and Sonora (that do not rely on extended features provided by Sfall) likely work, although there is no complete walkthrough confirmation yet. [Fallout 2 Restoration Project](https://github.com/BGforgeNet/Fallout2_Restoration_Project), [Fallout Et Tu](https://github.com/rotators/Fo1in2) and [Olympus 2207](https://olympus2207.com) are not yet supported. Other mods (particularly Resurrection and Yesterday) are not tested.
+This is the sequel to [fallout1-ce-miyoomini](https://github.com/cacuracaptors/fallout1-ce-miyoomini)
+— if you're curious how this port came together, that repository documents the full journey.
 
-There is also [Fallout Community Edition](https://github.com/alexbatalov/fallout1-ce).
+Built on top of the work of [Alexander Batalov](https://github.com/alexbatalov/fallout2-ce) and
+the SDL2 port for this hardware by [steward-fu](https://github.com/steward-fu/sdl2).
+
+## ⚠️ You need your own game files
+
+This repository does **not** include and will **never** include the Fallout 2 data files
+(`MASTER.DAT`, `CRITTER.DAT`, the `data/` folder) — they are the property of
+Interplay/Bethesda. You need a legitimate copy of the game (GOG or Steam) and must copy those
+files yourself. See [Installation](#installation) below.
+
+## Features
+
+- Software rendering (the Miyoo Mini Plus has no 3D GPU)
+- The same control scheme as the [Fallout 1 port](https://github.com/cacuracaptors/fallout1-ce-miyoomini),
+  adapted for the Miyoo Mini Plus' hardware, which has no analog sticks (see [Controls](#controls))
+- The D-pad acts as a mouse cursor
+- The same on-device text entry system (D-pad + buttons) for naming your character, save games,
+  etc., since the device has no physical keyboard
+- Working audio and video, including cutscenes (which play full-screen here, unlike the Fallout 1
+  port)
+
+## Controls
+
+| Button | Without Select | With Select held |
+|---|---|---|
+| D-pad | Moves the mouse cursor | Scrolls the camera/map |
+| A | Attack | Skilldex |
+| B | End Turn | Character screen |
+| X | Slow mouse (hold) | Inventory |
+| Y | End Combat | Pip-Boy |
+| L1 | Right click | Quickload (F7) |
+| R1 | Left click | Quicksave (F6) |
+| L2 | Switch active item | Map (Automap) |
+| R2 | Switch active item's mode | Center screen on player |
+| Start | Enter / confirm | — |
+| Select | (modifier) | — |
+| Menu Key (Function) | Esc / Menu/Return/Exit | — |
+
+Quicksave and Quickload have a short cooldown after firing (to avoid the underlying hardware's
+key-repeat behavior from spamming save/load repeatedly). All other Select-combo actions can be
+used again almost immediately.
+
+### Typing text (character name, save names, etc.)
+
+Since the device has no keyboard, text entry works by cycling through letters directly in the
+game's own text field:
+
+- **D-pad Up/Down**: cycles through the alphabet/numbers/space at the current position
+- **D-pad Left**: toggles uppercase/lowercase for the current letter
+- **D-pad Right**: inserts a space directly and moves to the next position
+- **A**: confirms the current letter and moves to the next position
+- **B**: deletes the last confirmed letter
+- **Start**: confirms the whole text entry (Enter)
+- **Menu Key (Function)**: cancels the whole text entry (Esc)
 
 ## Installation
 
-You must own the game to play. Purchase your copy on [GOG](https://www.gog.com/game/fallout_2), [Epic Games](https://store.epicgames.com/p/fallout-2) or [Steam](https://store.steampowered.com/app/38410). Download latest [release](https://github.com/alexbatalov/fallout2-ce/releases) or build from source. You can also check latest [debug](https://github.com/alexbatalov/fallout2-ce/actions) build intended for testers.
+1. Download the latest `.zip` from the [Releases](../../releases) tab of this repository.
+2. Extract its contents to the root of your OnionOS SD card.
+3. Copy the following files from your legitimate Fallout 2 installation (GOG/Steam) into
+   `Roms/PORTS/Games/Fallout2/`:
+   - `MASTER.DAT`
+   - `CRITTER.DAT`
+   - the `data/` folder
+   - `fallout2.cfg` (if included with your installation)
+4. On the device, open the **Ports** menu — "Fallout 2" should appear in the list. If not, use
+   "refresh roms" at the bottom of the list.
 
-### Windows
+## Building from source
 
-Download and copy `fallout2-ce.exe` to your `Fallout2` folder. It serves as a drop-in replacement for `fallout2.exe`.
+This port requires cross-compiling for ARMv7 hard-float using a Docker-based toolchain. Tested
+on Windows + WSL2 + Docker Desktop.
 
-### Linux
+### Prerequisites
 
-- Use Windows installation as a base - it contains data assets needed to play. Copy `Fallout2` folder somewhere, for example `/home/john/Desktop/Fallout2`.
+- WSL2 with Ubuntu, and Docker Desktop with WSL integration enabled.
 
-- Alternatively you can extract the needed files from the GoG installer:
+### Steps
 
-```console
-$ sudo apt install innoextract
-$ innoextract ~/Downloads/setup_fallout2_2.1.0.18.exe -I app
-$ mv app Fallout2
+```bash
+mkdir -p ~/fallout-miyoo && cd ~/fallout-miyoo
+
+# Cross toolchain
+git clone https://github.com/shauninman/union-miyoomini-toolchain.git
+
+# SDL2 ported for the Miyoo Mini (Plus)
+git clone https://github.com/steward-fu/sdl2.git sdl2-miyoo
+
+# This repository (already patched)
+git clone https://github.com/cacuracaptors/fallout2-ce-miyoomini.git fallout2-ce
 ```
 
-- Download and copy `fallout2-ce` to this folder.
+**1) Build the Miyoo Mini SDL2** (inside `sdl2-miyoo`, via Docker — see the
+[steward-fu/sdl2](https://github.com/steward-fu/sdl2) instructions for the full
+`make cfg && make gpu && make sdl2` process). No patches are needed here — this port builds
+against a completely unmodified copy of `steward-fu/sdl2`.
 
-- Install [SDL2](https://libsdl.org/download-2.0.php):
+**2) Build fallout2-ce** using the cross toolchain:
 
-```console
-$ sudo apt install libsdl2-2.0-0
+```bash
+cd union-miyoomini-toolchain
+make shell
 ```
 
-- Run `./fallout2-ce`.
+Inside the container:
 
-### macOS
+```bash
+cd ~/workspace/fallout2-ce
 
-> **NOTE**: macOS 10.11 (El Capitan) or higher is required. Runs natively on Intel-based Macs and Apple Silicon.
+cmake -B build \
+  -DCMAKE_TOOLCHAIN_FILE=toolchain-miyoomini.cmake \
+  -DCMAKE_MODULE_PATH=$(pwd)/cmake \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DFALLOUT_VENDORED=OFF \
+  -DSDL2_INCLUDE_DIR=/root/workspace/sdl2-miyoo/sdl2/include \
+  -DSDL2_LIBRARY=/root/workspace/sdl2-miyoo/sdl2/build/.libs/libSDL2.so \
+  -DCMAKE_EXE_LINKER_FLAGS="-Wl,--allow-shlib-undefined"
 
-- Use Windows installation as a base - it contains data assets needed to play. Copy `Fallout2` folder somewhere, for example `/Applications/Fallout2`.
-
-- Alternatively you can use Fallout 2 from Macplay/The Omni Group as a base - you need to extract game assets from the original bundle. Mount CD/DMG, right click `Fallout 2` -> `Show Package Contents`, navigate to `Contents/Resources`. Copy `GameData` folder somewhere, for example `/Applications/Fallout2`.
-
-- Or if you're a Terminal user and have Homebrew installed you can extract the needed files from the GoG installer:
-
-```console
-$ brew install innoextract
-$ innoextract ~/Downloads/setup_fallout2_2.1.0.18.exe -I app
-$ mv app /Applications/Fallout2
+cmake --build build -j4
 ```
 
-- Download and copy `fallout2-ce.app` to this folder.
+> **Note:** unlike fallout1-ce, this project fetches and builds its own copy of SDL2 by default.
+> `-DFALLOUT_VENDORED=OFF` is required to make it use our external, hardware-specific SDL2
+> instead.
 
-- Run `fallout2-ce.app`.
+The final ARM (armhf) binary `fallout2-ce` will be in `build/`.
 
-### Android
+### What this fork changes (compared to upstream fallout2-ce)
 
-> **NOTE**: Fallout 2 was designed with mouse in mind. There are many controls that require precise cursor positioning, which is not possible with fingers. Current control scheme resembles trackpad usage:
-- One finger moves mouse cursor around.
-- Tap one finger for left mouse click.
-- Tap two fingers for right mouse click (switches mouse cursor mode).
-- Move two fingers to scroll current view (map view, worldmap view, inventory scrollers).
+- **`src/dinput.cc`** — makes mouse "relative mode" initialization non-fatal (this device's SDL2
+  build doesn't implement it) and adds D-pad-as-mouse-cursor movement.
+- **`src/input.cc`** — the full physical-button-to-game-action remapping, the Select-modifier
+  layer, the on-device text entry system, and several fixes for this hardware's quirky
+  key-repeat/key-up event delivery (including a bug where reusing a mutated struct across a
+  synthetic press+release pair could leave a key permanently "stuck" in the auto-repeat system).
 
-> **NOTE**: From Android standpoint release and debug builds are different apps. Both apps require their own copy of game assets and have their own savegames. This is intentional. As a gamer just stick with release version and check for updates.
+## Known issues
 
-- Use Windows installation as a base - it contains data assets needed to play. Copy `Fallout2` folder to your device, for example to `Downloads`. You need `master.dat`, `critter.dat`, `patch000.dat`, and `data` folder. Watch for file names - keep (or make) them lowercased (see [Configuration](#configuration)).
+- **Audio has a noticeable, constant latency** (roughly consistent regardless of CPU clock
+  speed), same as observed in the Fallout 1 port. Traced to the underlying MI_AO (SigmaStar
+  audio output) driver — a closed-source binary blob we don't have source access to. We were
+  unable to fully resolve this; contributions welcome.
+- The mouse cursor moves noticeably slower on screens with an open text field (character
+  creation, save/load naming).
 
-- Download `fallout2-ce.apk` and copy it to your device. Open it with file explorer, follow instructions (install from unknown source).
+## Credits
 
-- When you run the game for the first time it will immediately present file picker. Select the folder from the first step. Wait until this data is copied. A loading dialog will appear, just wait for about 30 seconds. If you're installing total conversion mod or localized version with a large number of unpacked resources in `data` folder it can take up to 20 minutes. Once copied, the game will start automatically.
-
-### iOS
-
-> **NOTE**: See Android note on controls.
-
-- Download `fallout2-ce.ipa`. Use sideloading applications ([AltStore](https://altstore.io/) or [Sideloadly](https://sideloadly.io/)) to install it to your device. Alternatively you can always build from source with your own signing certificate.
-
-- Run the game once. You'll see error message saying "Couldn't find/load text fonts". This step is needed for iOS to expose the game via File Sharing feature.
-
-- Use Finder (macOS Catalina and later) or iTunes (Windows and macOS Mojave or earlier) to copy `master.dat`, `critter.dat`, `patch000.dat`, and `data` folder to "Fallout 2" app ([how-to](https://support.apple.com/HT210598)). Watch for file names - keep (or make) them lowercased (see [Configuration](#configuration)).
-
-## Configuration
-
-The main configuration file is `fallout2.cfg`. There are several important settings you might need to adjust for your installation. Depending on your Fallout distribution main game assets `master.dat`, `critter.dat`, `patch000.dat`, and `data` folder might be either all lowercased, or all uppercased. You can either update `master_dat`, `critter_dat`, `master_patches` and `critter_patches` settings to match your file names, or rename files to match entries in your `fallout2.cfg`.
-
-The `sound` folder (with `music` folder inside) might be located either in `data` folder, or be in the Fallout folder. Update `music_path1` setting to match your hierarchy, usually it's `data/sound/music/` or `sound/music/`. Make sure it matches your path exactly (so it might be `SOUND/MUSIC/` if you've installed Fallout from CD). Music files themselves (with `ACM` extension) should be all uppercased, regardless of `sound` and `music` folders.
-
-The second configuration file is `f2_res.ini`. Use it to change game window size and enable/disable fullscreen mode.
-
-```ini
-[MAIN]
-SCR_WIDTH=1280
-SCR_HEIGHT=720
-WINDOWED=1
-```
-
-Recommendations:
-- **Desktops**: Use any size you see fit.
-- **Tablets**: Set these values to logical resolution of your device, for example iPad Pro 11 is 1668x2388 (pixels), but it's logical resolution is 834x1194 (points).
-- **Mobile phones**: Set height to 480, calculate width according to your device screen (aspect) ratio, for example Samsung S21 is 20:9 device, so the width should be 480 * 20 / 9 = 1067.
-
-In time this stuff will receive in-game interface, right now you have to do it manually.
-
-The third configuration file is `ddraw.ini` (part of Sfall). There are dozens of options that adjust or override engine behaviour and gameplay mechanics. This file is intended for modders and advanced users. Currently only a small subset of these settings are actually implemented.
-
-## Contributing
-
-Integrating Sfall goodies is the top priority. Quality of life updates are OK too. Please no large scale refactorings at this time as we need to reconcile changes from Reference Edition, which will make this process slow and error-prone. In any case open up an issue with your suggestion or to notify other people that something is being worked on.
-
-### Intergrating Sfall
-
-There are literally hundreds if not thousands of fixes and features in sfall. I guess not all of them are needed in Community Edition, but for the sake of compatibility with big mods out there, let's integrate them all.
+- [Alexander Batalov](https://github.com/alexbatalov) — fallout2-ce
+- [steward-fu](https://github.com/steward-fu) — SDL2 for the Miyoo Mini (Plus)
+- [shauninman](https://github.com/shauninman) — union-miyoomini-toolchain
+- Interplay Entertainment / Black Isle Studios — the original Fallout 2 (1998)
 
 ## License
 
-The source code is this repository is available under the [Sustainable Use License](LICENSE.md).
+This port's source code follows the same license as fallout2-ce: the **Sustainable Use License**
+(see `LICENSE.md`). Use and distribution are free for non-commercial purposes, provided the
+original copyright notices are kept intact.

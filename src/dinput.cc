@@ -62,6 +62,19 @@ bool mouseDeviceGetData(MouseData* mouseState)
     gMouseWheelDeltaX = 0;
     gMouseWheelDeltaY = 0;
 
+    // BEGIN Miyoo Mini D-pad-as-mouse patch
+    const Uint8* padState = SDL_GetKeyboardState(NULL);
+    if (!padState[SDL_SCANCODE_RCTRL]) {
+        int padStep = padState[SDL_SCANCODE_LSHIFT] ? 2 : 6;
+        if (padState[SDL_SCANCODE_LEFT]) mouseState->x -= padStep;
+        if (padState[SDL_SCANCODE_RIGHT]) mouseState->x += padStep;
+        if (padState[SDL_SCANCODE_UP]) mouseState->y -= padStep;
+        if (padState[SDL_SCANCODE_DOWN]) mouseState->y += padStep;
+        if (padState[SDL_SCANCODE_T]) mouseState->buttons[0] = true;
+        if (padState[SDL_SCANCODE_E]) mouseState->buttons[1] = true;
+    }
+    // END Miyoo Mini D-pad-as-mouse patch
+
     return true;
 }
 
@@ -93,7 +106,8 @@ bool keyboardDeviceGetData(KeyboardData* keyboardData)
 // 0x4E070C
 bool mouseDeviceInit()
 {
-    return SDL_SetRelativeMouseMode(SDL_TRUE) == 0;
+    SDL_SetRelativeMouseMode(SDL_TRUE);
+    return true;
 }
 
 // 0x4E078C
