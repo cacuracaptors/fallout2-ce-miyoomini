@@ -119,7 +119,7 @@ small numbers for different modes; more details in
 | R2 | Switch item mode | Center camera on player |
 | Start | Enter / OK | - |
 | Select | *(modifier)* | - |
-| Menu key | Esc / Exit / Return | - |
+| Menu key | Esc / Exit / Return / Open Menu | - |
 
 The Menu key fires Esc on **release**, not on press - this means the OnionOS Menu+Power screenshot
 combo won't accidentally exit the game before you can take the screenshot.
