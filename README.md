@@ -15,6 +15,35 @@ text entry system for typing.
   <sub>The in-game "Quick Guide" help screen, replaced with the Miyoo Mini Plus control scheme</sub>
 </p>
 
+## Quality of life benefits over vanilla Fallout
+
+* Party members can loot and barter in place of PC
+* Directly equip party members instead of convincing them to use the right equipment
+* Ctrl-click (L2, quickly) to move items when bartering, looting, or stealing, and auto-balance caps
+* Music continues playing between maps
+* Auto open doors
+* Integrated "HELP" menu (with a Miyoo-specific control reference screen)
+
+<p align="center">
+  <img src="docs/images/quick-guide.png" alt="In-game Quick Guide showing the Miyoo Mini Plus control scheme" width="480">
+  <br>
+  <sub>The in-game "Quick Guide" help screen, replaced with the Miyoo Mini Plus control scheme</sub>
+</p>
+
+* Last used save slot is remembered
+* You can cancel elevator floor selection using the Menu key
+* Item/Corpse/Container/Critter highlighting
+* Dozens of small things that just work a little better than they did in the original - better
+  pathfinding, fewer graphics glitches, less finicky weapon stacking, and much more
+
+> **Note:** A few FOR:CE features that require a screen wider/taller than 640x480 (the 2-column
+> inventory, the 4-row barter screen, and other high-resolution UI layouts) are not available on this
+> handheld's fixed resolution. Everything else works normally.
+
+CE has broad (though not total) compatibility with [Sfall](https://github.com/sfall-team/sfall)
+scripting extensions. Many traditional Fallout mods work out of the box. See
+[SFALL_COMPATIBILITY.md](SFALL_COMPATIBILITY.md) for the current compatibility status.
+
 ## Installation
 
 1. Download the latest release from the [Releases page](../../releases).
@@ -117,28 +146,6 @@ own text field, the same system used in our [Fallout (1997) port](https://github
 
 A Miyoo-specific "Quick Guide" screen with this same control scheme (pictured above) is available from
 the Options menu at any time in-game.
-
-## Quality of life benefits over vanilla Fallout
-
-* Party members can loot and barter in place of PC
-* Directly equip party members instead of convincing them to use the right equipment
-* Ctrl-click (L2, quickly) to move items when bartering, looting, or stealing, and auto-balance caps
-* Music continues playing between maps
-* Auto open doors
-* Integrated "HELP" menu (with a Miyoo-specific control reference screen)
-* Last used save slot is remembered
-* You can cancel elevator floor selection using the Menu key
-* Item/Corpse/Container/Critter highlighting
-* Dozens of small things that just work a little better than they did in the original - better
-  pathfinding, fewer graphics glitches, less finicky weapon stacking, and much more
-
-> **Note:** A few FOR:CE features that require a screen wider/taller than 640x480 (the 2-column
-> inventory, the 4-row barter screen, and other high-resolution UI layouts) are not available on this
-> handheld's fixed resolution. Everything else works normally.
-
-CE has broad (though not total) compatibility with [Sfall](https://github.com/sfall-team/sfall)
-scripting extensions. Many traditional Fallout mods work out of the box. See
-[SFALL_COMPATIBILITY.md](SFALL_COMPATIBILITY.md) for the current compatibility status.
 
 ## Known issues
 
