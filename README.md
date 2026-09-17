@@ -25,7 +25,7 @@ keyboard for text entry.
 This port fully supports the [Restoration Project](https://github.com/BGforgeNet/Fallout2_Restoration_Project)
 mod, which restores a large amount of cut content. To use it:
 
-1. On a Windows PC, install Fallout 2 normally.
+1. On a PC, install Fallout 2 normally.
 2. Run the RPU installer on top of that same installation.
 3. Copy **all** files from that installed folder into the `Fallout 2` game folder on your SD card,
    overwriting when prompted. This includes `master.dat`, `critter.dat`, `ce.dat`, `mods/`, `data/` —
