@@ -37,22 +37,7 @@ For detailed instructions on how to play on Mac, Linux, iOS, or Android, see the
 <table>
   <tr>
     <td align="center">
-    <img src="docs/images/two-column-inventory.jpg" alt="Expanded 2-column inventory" width="360"><br>
-    <sub>Expanded 2-column inventory</sub>
-    </td>
-    <td align="center">
-      <img src="docs/images/companion-equip.gif" alt="Companion equip screen" width="360"><br>
-      <sub>Companion equip screen</sub>
-    </td>
-
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="docs/images/party-member-loot.gif" alt="Party member loot" width="360"><br>
-      <sub>Party member loot</sub>
-    </td>
-    <td align="center">
-      <img src="docs/images/help-menu.gif" alt="Integrated HELP menu" width="360"><br>
+           <img src="docs/images/help-menu.gif" alt="Integrated HELP menu" width="360"><br>
       <sub>Integrated HELP menu</sub>
     </td>
   </tr>
