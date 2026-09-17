@@ -47,7 +47,7 @@ scripting extensions. Many traditional Fallout mods work out of the box. See
    folder on the SD card:
    - `master.dat`
    - `critter.dat`
-   - `data/` (if your installation has one)
+   - `data/`
 
 > **If you have a previous 1.0.0 release of this port installed:** delete all files from the old
 > `Fallout 2` game folder first. That version was built on a different, unmaintained fork, and mixing
