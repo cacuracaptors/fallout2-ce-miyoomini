@@ -103,7 +103,6 @@ auto_open_doors=1
 The same applies to most other settings in that file - `0` is off, `1` is on (a few settings use other
 small numbers for different modes; more details in
 [FOR:CE](https://github.com/fallout2-ce/fallout2-ce) repository.
-explain those).
 
 ## Controls
 
