@@ -31,15 +31,6 @@ For detailed instructions on how to play on Mac, Linux, iOS, or Android, see the
 * Spiffy ammo meter with burst-mode segmentation
 * Item/Corpse/Container/Critter highlighting (configure using [mods/sfall-mods.ini](https://github.com/sfall-team/sfall/blob/master/artifacts/config_files/sfall-mods.ini))
 
-<table>
-  <tr>
-    <td align="center">
-           <img src="docs/images/help-menu.gif" alt="Integrated HELP menu" width="360"><br>
-      <sub>Integrated HELP menu</sub>
-    </td>
-  </tr>
-</table>
-
 There are also dozens of small things that just work a little better than they did in the original.  Better pathfinding, fewer graphics glitches, less finicky weapon stacking, and much more.
 
 ## Configuration
