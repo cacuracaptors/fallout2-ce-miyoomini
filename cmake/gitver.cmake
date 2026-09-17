@@ -8,7 +8,7 @@ execute_process(
 
 # Get current branch
 execute_process(
-    COMMAND git branch --show-current
+    COMMAND git rev-parse --abbrev-ref HEAD
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     OUTPUT_VARIABLE BRANCH
     OUTPUT_STRIP_TRAILING_WHITESPACE

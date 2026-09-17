@@ -115,7 +115,8 @@ int textFontsInit()
     memcpy(&fontManager, &gTextFontManager, sizeof(fontManager));
 
     for (int font = 0; font < TEXT_FONT_MAX; font++) {
-        if (textFontLoad(font) == -1) {
+        int rc = textFontLoad(font);
+        if (rc == -1) {
             gTextFontDescriptors[font].glyphCount = 0;
         } else {
             if (currentFont == -1) {

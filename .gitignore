@@ -411,4 +411,5 @@ CMakeUserPresets.json
 AGENTS.md
 CLAUDE.md
 GEMINI.md
-opencode.json
+opencode.jsonbuild/
+build-native/

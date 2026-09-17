@@ -82,6 +82,72 @@ static int _input_my;
 // 0x6AC760 screendump_key
 static int gScreenshotKeyCode;
 
+// BEGIN Miyoo Mini key debounce patch
+static bool gMiyooKeyDownState[SDL_NUM_SCANCODES] = { false };
+static Uint32 gMiyooLastFireTime[SDL_NUM_SCANCODES] = { 0 };
+static bool gMiyooArrowForwardedDown[SDL_NUM_SCANCODES] = { false };
+// END Miyoo Mini key debounce patch
+
+// BEGIN Miyoo Mini virtual keyboard patch
+static bool gMiyooTextInputActive = false;
+static int gMiyooCycleIndex = 0;
+static bool gMiyooCyclePreviewShown = false;
+static bool gMiyooLowercase = false;
+static const char gMiyooCharset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
+
+static int miyooCharsetLen()
+{
+    int len = 0;
+    while (gMiyooCharset[len] != '\0') {
+        len++;
+    }
+    return len;
+}
+
+static SDL_Scancode miyooCharToScancode(char c)
+{
+    if (c >= 'A' && c <= 'Z') {
+        return (SDL_Scancode)(SDL_SCANCODE_A + (c - 'A'));
+    }
+    if (c >= '1' && c <= '9') {
+        return (SDL_Scancode)(SDL_SCANCODE_1 + (c - '1'));
+    }
+    if (c == '0') {
+        return SDL_SCANCODE_0;
+    }
+    return SDL_SCANCODE_SPACE;
+}
+
+static void miyooSendSyntheticKey(SDL_Scancode code)
+{
+    KeyboardData kd;
+    kd.key = code;
+    kd.down = true;
+    _GNW95_process_key(&kd);
+    kd.key = code;
+    kd.down = false;
+    _GNW95_process_key(&kd);
+}
+
+static void miyooSendLetterWithCase(char c)
+{
+    bool useShift = !gMiyooLowercase;
+    if (useShift) {
+        KeyboardData kd;
+        kd.key = SDL_SCANCODE_LSHIFT;
+        kd.down = true;
+        _GNW95_process_key(&kd);
+    }
+    miyooSendSyntheticKey(miyooCharToScancode(c));
+    if (useShift) {
+        KeyboardData kd;
+        kd.key = SDL_SCANCODE_LSHIFT;
+        kd.down = false;
+        _GNW95_process_key(&kd);
+    }
+}
+// END Miyoo Mini virtual keyboard patch
+
 // 0x6AC76C screendump_func
 static ScreenshotHandler* gScreenshotHandler;
 
@@ -1019,20 +1085,215 @@ void _GNW95_process_message()
             break;
         case SDL_KEYDOWN:
         case SDL_KEYUP: {
-            keyboardData.key = e.key.keysym.scancode;
-            keyboardData.down = (e.key.state & SDL_PRESSED) != 0;
-            bool syntheticSfallKey = sfall_kb_consume_synthetic_key_event(keyboardData.key, keyboardData.down);
-            if (!keyboardIsDisabled()) {
-                if (!e.key.repeat && !syntheticSfallKey) {
-                    int keyOverride = sfall_kb_handle_key_pressed(keyboardData.key, keyboardData.down);
-                    if (keyOverride == SDL_SCANCODE_UNKNOWN) {
-                        break;
-                    }
-                    if (keyOverride != -1) {
-                        keyboardData.key = keyOverride;
+            SDL_Scancode sc = e.key.keysym.scancode;
+            bool isDown = (e.key.state == SDL_PRESSED);
+            bool syntheticSfallKey = sfall_kb_consume_synthetic_key_event(sc, isDown);
+
+            if (keyboardIsDisabled()) {
+                break;
+            }
+
+            if (!e.key.repeat && !syntheticSfallKey) {
+                int keyOverride = sfall_kb_handle_key_pressed(sc, isDown);
+                if (keyOverride == SDL_SCANCODE_UNKNOWN) {
+                    break;
+                }
+                if (keyOverride != -1) {
+                    sc = (SDL_Scancode)keyOverride;
+                }
+            }
+
+            bool wasKeyDown = gMiyooKeyDownState[sc];
+            gMiyooKeyDownState[sc] = isDown;
+            bool isPhysicalRepeat = isDown && wasKeyDown;
+
+            if (isPhysicalRepeat) {
+                break;
+            }
+
+            // Miyoo Mini: Menu key sends Escape. OnionOS uses Menu+Power to
+            // take a screenshot, so firing Escape on keydown would exit the
+            // game before Power can be pressed. Only fire on release.
+            if (sc == SDL_SCANCODE_ESCAPE) {
+                if (isDown) {
+                    break;
+                }
+                keyboardData.key = sc;
+                keyboardData.down = true;
+                _GNW95_process_key(&keyboardData);
+                keyboardData.down = false;
+                _GNW95_process_key(&keyboardData);
+                break;
+            }
+
+            bool isArrowKey = (sc == SDL_SCANCODE_LEFT || sc == SDL_SCANCODE_RIGHT
+                || sc == SDL_SCANCODE_UP || sc == SDL_SCANCODE_DOWN);
+            if (!isDown && isArrowKey && gMiyooArrowForwardedDown[sc]) {
+                keyboardData.key = sc;
+                keyboardData.down = false;
+                _GNW95_process_key(&keyboardData);
+                gMiyooArrowForwardedDown[sc] = false;
+                break;
+            } else if (!isDown && sc == SDL_SCANCODE_RCTRL) {
+                static const SDL_Scancode arrowScancodes[4] = {
+                    SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN
+                };
+                for (int i = 0; i < 4; i++) {
+                    SDL_Scancode arrowSc = arrowScancodes[i];
+                    if (gMiyooArrowForwardedDown[arrowSc]) {
+                        keyboardData.key = arrowSc;
+                        keyboardData.down = false;
+                        _GNW95_process_key(&keyboardData);
+                        gMiyooArrowForwardedDown[arrowSc] = false;
                     }
                 }
-                _GNW95_process_key(&keyboardData);
+                break;
+            }
+
+            if (gMiyooTextInputActive) {
+                bool handled = false;
+                if (isDown) {
+                    if (sc == SDL_SCANCODE_UP || sc == SDL_SCANCODE_DOWN) {
+                        if (gMiyooCyclePreviewShown) {
+                            miyooSendSyntheticKey(SDL_SCANCODE_BACKSPACE);
+                        }
+                        int len = miyooCharsetLen();
+                        if (sc == SDL_SCANCODE_UP) {
+                            gMiyooCycleIndex = (gMiyooCycleIndex + 1) % len;
+                        } else {
+                            gMiyooCycleIndex = (gMiyooCycleIndex - 1 + len) % len;
+                        }
+                        miyooSendLetterWithCase(gMiyooCharset[gMiyooCycleIndex]);
+                        gMiyooCyclePreviewShown = true;
+                        handled = true;
+                    } else if (sc == SDL_SCANCODE_LEFT) {
+                        gMiyooLowercase = !gMiyooLowercase;
+                        if (gMiyooCyclePreviewShown) {
+                            miyooSendSyntheticKey(SDL_SCANCODE_BACKSPACE);
+                            miyooSendLetterWithCase(gMiyooCharset[gMiyooCycleIndex]);
+                        }
+                        handled = true;
+                    } else if (sc == SDL_SCANCODE_RIGHT) {
+                        if (gMiyooCyclePreviewShown) {
+                            miyooSendSyntheticKey(SDL_SCANCODE_BACKSPACE);
+                        }
+                        miyooSendSyntheticKey(SDL_SCANCODE_SPACE);
+                        gMiyooCyclePreviewShown = false;
+                        gMiyooCycleIndex = 0;
+                        handled = true;
+                    } else if (sc == SDL_SCANCODE_SPACE) {
+                        gMiyooCyclePreviewShown = false;
+                        gMiyooCycleIndex = 0;
+                        handled = true;
+                    } else if (sc == SDL_SCANCODE_LCTRL) {
+                        if (gMiyooCyclePreviewShown) {
+                            miyooSendSyntheticKey(SDL_SCANCODE_BACKSPACE);
+                            gMiyooCyclePreviewShown = false;
+                        }
+                        miyooSendSyntheticKey(SDL_SCANCODE_BACKSPACE);
+                        handled = true;
+                    }
+                }
+                if (!handled) {
+                    keyboardData.key = sc;
+                    keyboardData.down = isDown;
+                    _GNW95_process_key(&keyboardData);
+                }
+                break;
+            }
+
+            const Uint8* liveKeys = SDL_GetKeyboardState(NULL);
+            bool selectHeld = liveKeys[SDL_SCANCODE_RCTRL] != 0;
+            bool suppress = false;
+            SDL_Scancode remapped = sc;
+
+            if (!selectHeld) {
+                switch (sc) {
+                case SDL_SCANCODE_LEFT:
+                case SDL_SCANCODE_RIGHT:
+                case SDL_SCANCODE_UP:
+                case SDL_SCANCODE_DOWN:
+                case SDL_SCANCODE_E:
+                case SDL_SCANCODE_T:
+                case SDL_SCANCODE_LSHIFT:
+                    suppress = true;
+                    break;
+                case SDL_SCANCODE_SPACE:
+                    remapped = SDL_SCANCODE_A;
+                    break;
+                case SDL_SCANCODE_LCTRL:
+                    remapped = SDL_SCANCODE_SPACE;
+                    break;
+                case SDL_SCANCODE_LALT:
+                    remapped = SDL_SCANCODE_RETURN;
+                    break;
+                case SDL_SCANCODE_TAB:
+                    remapped = SDL_SCANCODE_B;
+                    break;
+                case SDL_SCANCODE_BACKSPACE:
+                    remapped = SDL_SCANCODE_N;
+                    break;
+                default:
+                    break;
+                }
+            } else {
+                switch (sc) {
+                case SDL_SCANCODE_RCTRL:
+                    suppress = true;
+                    break;
+                case SDL_SCANCODE_SPACE:
+                    remapped = SDL_SCANCODE_S;
+                    break;
+                case SDL_SCANCODE_LCTRL:
+                    remapped = SDL_SCANCODE_C;
+                    break;
+                case SDL_SCANCODE_LSHIFT:
+                    remapped = SDL_SCANCODE_I;
+                    break;
+                case SDL_SCANCODE_LALT:
+                    remapped = SDL_SCANCODE_P;
+                    break;
+                case SDL_SCANCODE_E:
+                    remapped = SDL_SCANCODE_F7;
+                    break;
+                case SDL_SCANCODE_T:
+                    remapped = SDL_SCANCODE_F6;
+                    break;
+                case SDL_SCANCODE_BACKSPACE:
+                    remapped = SDL_SCANCODE_HOME;
+                    break;
+                case SDL_SCANCODE_TAB:
+                case SDL_SCANCODE_LEFT:
+                case SDL_SCANCODE_RIGHT:
+                case SDL_SCANCODE_UP:
+                case SDL_SCANCODE_DOWN:
+                    remapped = sc;
+                    break;
+                default:
+                    break;
+                }
+            }
+
+            if (!suppress) {
+                bool isContinuousArrow = (sc == SDL_SCANCODE_LEFT || sc == SDL_SCANCODE_RIGHT
+                    || sc == SDL_SCANCODE_UP || sc == SDL_SCANCODE_DOWN);
+                if (selectHeld && !isContinuousArrow) {
+                    if (isDown) {
+                        Uint32 cooldownMs = (sc == SDL_SCANCODE_E || sc == SDL_SCANCODE_T) ? 7000 : 400;
+                        Uint32 nowMs = SDL_GetTicks();
+                        if (nowMs - gMiyooLastFireTime[sc] >= cooldownMs) {
+                            gMiyooLastFireTime[sc] = nowMs;
+                            miyooSendSyntheticKey(remapped);
+                        }
+                    }
+                } else {
+                    keyboardData.key = remapped;
+                    keyboardData.down = isDown;
+                    _GNW95_process_key(&keyboardData);
+                    if (isContinuousArrow) {
+                        gMiyooArrowForwardedDown[sc] = keyboardData.down;
+                    }
+                }
             }
             break;
         }
@@ -1136,11 +1397,15 @@ void _GNW95_lost_focus()
 void beginTextInput()
 {
     SDL_StartTextInput();
+    gMiyooTextInputActive = true;
+    gMiyooCycleIndex = 0;
+    gMiyooCyclePreviewShown = false;
 }
 
 void endTextInput()
 {
     SDL_StopTextInput();
+    gMiyooTextInputActive = false;
 }
 
 } // namespace fallout

@@ -184,9 +184,7 @@ int debugPrint(const char* format, ...)
         rc = -1;
     }
 
-#ifndef NDEBUG
     SDL_Log("%s", string);
-#endif
 
     return rc;
 }

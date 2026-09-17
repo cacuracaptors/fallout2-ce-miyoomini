@@ -87,7 +87,8 @@ int interfaceFontsInit()
     int currentFont = -1;
 
     for (int font = 0; font < INTERFACE_FONT_MAX; font++) {
-        if (interfaceFontLoad(font) == -1) {
+        int rc = interfaceFontLoad(font);
+        if (rc == -1) {
             gInterfaceFontDescriptors[font].maxHeight = 0;
             gInterfaceFontDescriptors[font].data = nullptr;
         } else {
