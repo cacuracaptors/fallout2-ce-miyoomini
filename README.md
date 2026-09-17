@@ -58,13 +58,6 @@ resolution_y=1080
 windowed=1 ; 0 = fullscreen
 scale=2 ; 1 = original scale, 2 = 2x scale, etc. (e.g. at scale 2 and screen resolution 1920x1080, in-game resolution will be 960x540, thus every pixel is twice as wide and tall)
 
-[ui]
-; Maximum number of columns shown in the main inventory and loot/steal windows (valid range: 1..2)
-inventory_columns=2
-
-; Set to 1 to expand the barter/trade window vertically, adding a 4th item slot per side (requires ce.dat)
-expand_barter_window=1
-
 [qol]
 ; Allow opening party member inventory from the long-press context menu.
 party_trade_from_menu=1
