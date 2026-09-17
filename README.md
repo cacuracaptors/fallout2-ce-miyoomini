@@ -18,7 +18,6 @@ For detailed instructions on how to play on Mac, Linux, iOS, or Android, see the
 
 ## Quality of life benefits over vanilla Fallout
 
-* High resolution support
 * Party members can loot and barter in place of PC
 * Directly equip party members instead of convincing them to use the right equipment.
 * Expanded AP bar
