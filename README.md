@@ -116,7 +116,7 @@ small numbers for different modes; more details in
 | L1 | Right click | Quickload |
 | R1 | Left click | Quicksave |
 | L2 | Switch active item | Automap |
-| R2 | Switch item mode | Center on player |
+| R2 | Switch item mode | Center camera on player |
 | Start | Enter / OK | - |
 | Select | *(modifier)* | - |
 | Menu key | Esc / Exit / Return | - |
