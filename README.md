@@ -9,12 +9,6 @@ a built-in sfall-compatible scripting engine, dozens of quality-of-life settings
 vanilla Fallout 2 - all running natively on ARM, with a full D-pad/button control scheme and an on-device
 text entry system for typing.
 
-<p align="center">
-  <img src="docs/images/quick-guide.png" alt="In-game Quick Guide showing the Miyoo Mini Plus control scheme" width="480">
-  <br>
-  <sub>The in-game "Quick Guide" help screen, replaced with the Miyoo Mini Plus control scheme</sub>
-</p>
-
 ## Quality of life benefits over vanilla Fallout
 
 * Party members can loot and barter in place of PC
