@@ -21,8 +21,6 @@ For detailed instructions on how to play on Mac, Linux, iOS, or Android, see the
 * High resolution support
 * Party members can loot and barter in place of PC
 * Directly equip party members instead of convincing them to use the right equipment.
-* Expanded 2-column inventory, loot screens
-* Expanded 4-row barter screen
 * Expanded AP bar
 * Ctrl-click to quickly move items when bartering, looting, or stealing, and auto-balance caps
 * Music continues playing between maps
