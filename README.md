@@ -29,8 +29,11 @@ text entry system for typing.
 - Auto open doors
 - Integrated "HELP" menu (with a Miyoo-specific control reference screen)
 
-[![In-game Quick Guide showing the Miyoo Mini Plus control scheme](https://github.com/cacuracaptors/fallout2-ce-miyoomini/raw/main/docs/images/quick-guide.png)](/cacuracaptors/fallout2-ce-miyoomini/blob/main/docs/images/quick-guide.png)
-The in-game "Quick Guide" help screen, replaced with the Miyoo Mini Plus control scheme
+<p align="center">
+  <img src="docs/images/quick-guide.png" alt="In-game Quick Guide showing the Miyoo Mini Plus control scheme" width="480">
+  <br>
+  <sub>The in-game "Quick Guide" help screen, replaced with the Miyoo Mini Plus control scheme</sub>
+</p>
 
 - Last used save slot is remembered
 - You can cancel elevator floor selection using the Menu key
