@@ -9,6 +9,16 @@ a built-in sfall-compatible scripting engine, dozens of quality-of-life settings
 vanilla Fallout 2 - all running natively on ARM, with a full D-pad/button control scheme and an on-device
 text entry system for typing.
 
+## OnionOS Exclusive Features
+
+- Software rendering (the Miyoo Mini Plus has no 3D GPU)
+- A full control scheme adapted for the Miyoo Mini Plus' hardware, which has no analog sticks
+  (see [Controls](#controls))
+- The D-pad acts as a mouse cursor
+- A custom on-device text entry system (D-pad + buttons) for naming your character, save games,
+  etc., since the device has no physical keyboard
+- Working audio and video, including cutscenes
+
 ## Quality of life benefits over vanilla Fallout
 
 * Party members can loot and barter in place of PC
