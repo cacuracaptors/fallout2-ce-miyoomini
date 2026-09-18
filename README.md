@@ -50,7 +50,7 @@ CE has broad (though not total) compatibility with [Sfall](https://github.com/sf
 ## Installation
 
 1. Download the latest release from the [Releases page](https://github.com/cacuracaptors/fallout2-ce-miyoomini/releases).
-2. Extract its contents to the root of your OnionOS SD card (this places `Fallout 2` in `Roms/PORTS/Games/`, and the Shortcuts and Imgs in `Roms/PORTS/`).
+2. Extract its contents to the root of your OnionOS SD card (this places `Fallout 2` in `Roms/PORTS/Games/`, and the `Shortcuts` and `Imgs` in `Roms/PORTS/`).
 3. You need your own legitimate copy of Fallout 2's data files. Copy these into the `Fallout 2` game
    folder on the SD card:
    - `master.dat`
