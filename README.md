@@ -24,7 +24,7 @@ text entry system for typing.
 
 * Party members can loot and barter in place of PC
 * Directly equip party members instead of convincing them to use the right equipment
-* Press L2, quickly to move items when bartering, looting, or stealing, and auto-balance caps
+* Press L2, quickly, to move items when bartering, looting, or stealing, and auto-balance caps
 * Music continues playing between maps
 * Auto open doors
 * Integrated "HELP" menu (with a Miyoo-specific control reference screen)
