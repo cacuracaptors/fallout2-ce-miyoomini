@@ -243,9 +243,10 @@ The final ARM (armhf) binary `fallout2-ce` will be in `build/`.
 ## Credits
 
 - [fallout2-ce/fallout2-ce (FOR:CE)](https://github.com/fallout2-ce/fallout2-ce)
-- Original fallout2-ce by Alexander Batalov
-- [Restoration Project (RPU)](https://github.com/BGforgeNet/Fallout2_Restoration_Project) by the BGforgeNet community
-- Miyoo Mini Plus SDL2 driver by Steward Fu
+- Original fallout2-ce by [Alexander Batalov](https://github.com/alexbatalov)
+- [Restoration Project (RPU)](https://github.com/BGforgeNet/Fallout2_Restoration_Project) by the [BGforgeNet community](https://github.com/BGforgeNet)
+- Miyoo Mini Plus SDL2 driver by [Steward Fu](https://github.com/steward-fu)
+- Miyoo Mini toolchain by [Shauninman](https://github.com/shauninman)
 
 ## License
 
