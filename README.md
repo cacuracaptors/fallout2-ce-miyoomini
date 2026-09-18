@@ -247,7 +247,7 @@ The final ARM (armhf) binary `fallout2-ce` will be in `build/`.
 - Original [fallout2-ce](https://github.com/alexbatalov/fallout1-ce) by [Alexander Batalov](https://github.com/alexbatalov)
 - [Restoration Project (RPU)](https://github.com/BGforgeNet/Fallout2_Restoration_Project) by the [BGforgeNet community](https://github.com/BGforgeNet)
 - Miyoo Mini Plus custom SDL2 driver by [Steward Fu](https://github.com/steward-fu)
-- Miyoo Mini custom toolchain by [Shaun Inman ](https://github.com/shauninman)
+- Miyoo Mini toolchain by [Shaun Inman ](https://github.com/shauninman)
 - Original Fallout 2 (1998) by Interplay Entertainment / Black Isle Studios
 
 ## License
