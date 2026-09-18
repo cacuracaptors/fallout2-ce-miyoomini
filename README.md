@@ -137,9 +137,6 @@ own text field, the same system used in our [Fallout (1997) port](https://github
 - **Start**: confirms the whole text entry (Enter)
 - **Menu key**: cancels the whole text entry (Esc)
 
-A Miyoo-specific "Quick Guide" screen with this same control scheme (pictured above) is available from
-the Options menu at any time in-game.
-
 ## Known issues
 
 - Audio has a noticeable, constant latency, the same underlying hardware limitation documented in our
