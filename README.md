@@ -20,7 +20,7 @@ text entry system for typing.
   etc., since the device has no physical keyboard
 - Working audio and video, including cutscenes
 
-## Quality of life benefits over vanilla Fallout
+## Quality of life benefits over vanilla Fallout 2
 
 * Party members can loot and barter in place of PC
 * Directly equip party members instead of convincing them to use the right equipment
