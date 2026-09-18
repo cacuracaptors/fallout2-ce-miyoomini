@@ -150,6 +150,7 @@ the Options menu at any time in-game.
   Fallout (1997) port.
 - The mouse cursor moves noticeably slower on screens with an open text field (character creation,
   save/load naming, etc.).
+- Some random crashes I'm still looking into.
 
 ## Building from source
 
