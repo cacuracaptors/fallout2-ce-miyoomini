@@ -126,7 +126,7 @@ small numbers for different modes; more details in the [FOR:CE](https://github.c
 | Menu key | Esc / Exit / Return / Open Menu | -                        |
 
 The Menu key fires Esc on **release**, not on press - this means the OnionOS Menu+Power screenshot
-combo won't accidentally exit the game before you can take the screenshot.
+combo won't accidentally exit the game before you can take a screenshot.
 
 ### Typing text (character name, save names, etc.)
 
