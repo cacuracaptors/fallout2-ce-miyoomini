@@ -50,7 +50,7 @@ CE has broad (though not total) compatibility with [Sfall](https://github.com/sf
 ## Installation
 
 1. Download the latest release from the [Releases page](https://github.com/cacuracaptors/fallout2-ce-miyoomini/releases).
-2. Extract its contents to the root of your OnionOS SD card (this places `Fallout 2` in `Roms/PORTS/Games/`, and the shortcut + icon in `Roms/PORTS/`).
+2. Extract its contents to the root of your OnionOS SD card (this places `Fallout 2` in `Roms/PORTS/Games/`, and `Shortcuts` and `Imgs` in `Roms/PORTS/`).
 3. You need your own legitimate copy of Fallout 2's data files. Copy these into the `Fallout 2` game
    folder on the SD card:
    - `master.dat`
@@ -126,7 +126,7 @@ small numbers for different modes; more details in the [FOR:CE](https://github.c
 | Menu key | Esc / Exit / Return / Open Menu | -                        |
 
 The Menu key fires Esc on **release**, not on press - this means the OnionOS Menu+Power screenshot
-combo won't accidentally exit the game before you can take the screenshot.
+combo won't accidentally exit the game before you can take a screenshot.
 
 ### Typing text (character name, save names, etc.)
 
@@ -150,6 +150,7 @@ the Options menu at any time in-game.
   Fallout (1997) port.
 - The mouse cursor moves noticeably slower on screens with an open text field (character creation,
   save/load naming, etc.).
+- Some random crashes I'm still looking into.
 
 ## Building from source
 
@@ -242,10 +243,12 @@ The final ARM (armhf) binary `fallout2-ce` will be in `build/`.
 
 ## Credits
 
-- [fallout2-ce/fallout2-ce (FOR:CE)](https://github.com/fallout2-ce/fallout2-ce)
-- Original fallout2-ce by Alexander Batalov
-- [Restoration Project (RPU)](https://github.com/BGforgeNet/Fallout2_Restoration_Project) by the BGforgeNet community
-- Miyoo Mini Plus SDL2 driver by Steward Fu
+- [fallout2-ce/fallout2-ce (FOR:CE)](https://github.com/fallout2-ce/fallout2-ce) by [FOR:CE Community Engine](https://github.com/fallout2-ce)
+- Original [fallout2-ce](https://github.com/alexbatalov/fallout1-ce) by [Alexander Batalov](https://github.com/alexbatalov)
+- [Restoration Project (RPU)](https://github.com/BGforgeNet/Fallout2_Restoration_Project) by the [BGforgeNet community](https://github.com/BGforgeNet)
+- Miyoo Mini Plus custom SDL2 driver by [Steward Fu](https://github.com/steward-fu)
+- Miyoo Mini toolchain by [Shaun Inman ](https://github.com/shauninman)
+- Original Fallout 2 (1998) by Interplay Entertainment / Black Isle Studios
 
 ## License
 
