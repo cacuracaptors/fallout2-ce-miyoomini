@@ -70,8 +70,19 @@ static void audioEngineMixin(void* userData, Uint8* stream, int length)
                 }
 
                 // TODO: Make something better than frame-by-frame convertion.
-                SDL_AudioStreamPut(soundBuffer->stream, (unsigned char*)soundBuffer->data + soundBuffer->pos, srcFrameSize);
-                soundBuffer->pos += srcFrameSize;
+                // Clamp to the bytes actually remaining in the buffer to avoid
+                // reading past its end when pos is close to size (fixes an
+                // intermittent crash on the Miyoo Mini Plus).
+                int available = soundBuffer->size - soundBuffer->pos;
+                int frameSize = srcFrameSize;
+                if (frameSize > available) {
+                    frameSize = available;
+                }
+
+                if (frameSize > 0) {
+                    SDL_AudioStreamPut(soundBuffer->stream, (unsigned char*)soundBuffer->data + soundBuffer->pos, frameSize);
+                    soundBuffer->pos += frameSize;
+                }
 
                 int bytesRead = SDL_AudioStreamGet(soundBuffer->stream, buffer, remaining);
                 if (bytesRead == -1) {
