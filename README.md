@@ -148,6 +148,7 @@ the Options menu at any time in-game.
 
 - The mouse cursor moves noticeably slower on screens with an open text field (character creation,
   save/load naming, etc.).
+- Sometimes, controls get weird and some keys stop working or generate the wrong input. I'm still looking into it.
 
 ## Changelog
 
