@@ -149,6 +149,17 @@ the Options menu at any time in-game.
 - The mouse cursor moves noticeably slower on screens with an open text field (character creation,
   save/load naming, etc.).
 
+## Changelog
+
+- **v1.1.1** - Fixed an intermittent crash caused by an audio buffer over-read near the end of a
+  sound buffer. Fixing this crash also eliminated the constant audio latency that was previously
+  a known issue. Updated the Quick Guide help screen image.
+- **v1.1.0** - Relaunched this port on top of the actively maintained FOR:CE fork (instead of the
+  original, unmaintained fallout2-ce). Added Restoration Project (RPU) support, native mod
+  support, a Miyoo-specific "Quick Guide" help screen, and dozens of quality-of-life settings
+  inherited from FOR:CE.
+- **v1.0.0** - Initial release, based on the original fallout2-ce fork.
+
 ## Building from source
 
 This port requires cross-compiling for ARMv7 hard-float using a Docker-based toolchain. Tested
@@ -237,17 +248,6 @@ The final ARM (armhf) binary `fallout2-ce` will be in `build/`.
   folder, which always takes priority over both `master.dat` and any mod.
 - **`toolchain-miyoomini.cmake`, `cmake_miyoo/FindSDL2.cmake`** - cross-compilation setup for this
   hardware's ARMv7 hard-float toolchain.
-
-## Changelog
-
-- **v1.1.1** - Fixed an intermittent crash caused by an audio buffer over-read near the end of a
-  sound buffer. Fixing this crash also eliminated the constant audio latency that was previously
-  a known issue. Updated the Quick Guide help screen image.
-- **v1.1.0** - Relaunched this port on top of the actively maintained FOR:CE fork (instead of the
-  original, unmaintained fallout2-ce). Added Restoration Project (RPU) support, native mod
-  support, a Miyoo-specific "Quick Guide" help screen, and dozens of quality-of-life settings
-  inherited from FOR:CE.
-- **v1.0.0** - Initial release, based on the original fallout2-ce fork.
 
 ## Credits
 
