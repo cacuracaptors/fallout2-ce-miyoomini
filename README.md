@@ -147,7 +147,7 @@ the Options menu at any time in-game.
 ## Known issues
 
 - The mouse cursor moves noticeably slower on screens with an open text field (character creation,
-save/load naming, etc.). This one tracks down to the main fork too, so we'll have to deal with it for now.
+save/load naming, etc.). This one tracks down to the main fork, so we'll have to deal with it for now.
 - Sometimes, the game crashes when skipping intro videos quickly. Still under investigation.
 - Also sometimes, controls get weird and some keys stop working or generating the wrong input. That's caused by a conflict with Restoration Project Updated (RPU), I'm still looking into it. For now, go to "Roms/PORTS/Games/Fallout 2/Mods/" and open "sfall-mods.ini". Right at the beggining, in [Highlighting], change "Key=42" to "Key=0" to disable item highlighting 'till I fix it.
 
