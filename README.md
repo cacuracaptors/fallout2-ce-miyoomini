@@ -148,7 +148,7 @@ the Options menu at any time in-game.
 
 - The mouse cursor moves noticeably slower on screens with an open text field (character creation,
 save/load naming, etc.). This one tracks down to the main fork, so we'll have to deal with it for now.
-- Sometimes, the game crashes when skipping intro videos too quickly. Still under investigation.
+- Sometimes, the game crashes when skipping intro videos. Still under investigation.
 - Also sometimes, controls get weird and some keys stop working or generating the wrong input. This is caused by a conflict with Sfall, included in Restoration Project Updated (RPU). For now, go to "Roms/PORTS/Games/Fallout 2/Mods/" and open "sfall-mods.ini". Right at the beggining, in [Highlighting], change "Key=42" to "Key=0" to disable item highlighting 'till I fix it.
 
 
