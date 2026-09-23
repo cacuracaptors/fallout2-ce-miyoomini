@@ -116,7 +116,7 @@ small numbers for different modes; more details in the [FOR:CE](https://github.c
 | A        | Attack                          | Skilldex                |
 | B        | End turn                        | Character               |
 | X        | Slow mouse (hold)               | Inventory               |
-| Y        | Sfall Highlight (hold)          | Pip-Boy                 |
+| Y        | Sfall's Item Highlight (hold)   | Pip-Boy                 |
 | L1       | Right click                     | Quickload                |
 | R1       | Left click                      | Quicksave                |
 | L2       | Switch active item              | Automap                 |
