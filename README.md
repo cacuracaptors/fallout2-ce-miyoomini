@@ -76,7 +76,7 @@ already fixes.
 
 To install it:
 
-1. On a PC, install Fallout 2 normally.
+1. On a PC, install Fallout 2 normally (Use GOG's version for now, since Steam's not working yet. I'm working on it).
 2. Run the RPU installer on top of that same installation.
 3. Copy **all** files from that installed folder into the `Fallout 2` game folder on your SD card,
    overwriting when prompted. This includes `master.dat`, `critter.dat`, `ce.dat`, `mods/`, `data/` -
