@@ -37,7 +37,7 @@ text entry system for typing.
 
 - Last used save slot is remembered
 - You can cancel elevator floor selection using the Menu key
-- Item/Corpse/Container/Critter highlighting
+- Item/Corpse/Container/Critter highlighting (hold Y)
 - Dozens of small things that just work a little better than they did in the original - better
   pathfinding, fewer graphics glitches, less finicky weapon stacking, and much more
 
@@ -116,14 +116,17 @@ small numbers for different modes; more details in the [FOR:CE](https://github.c
 | A        | Attack                          | Skilldex                |
 | B        | End turn                        | Character               |
 | X        | Slow mouse (hold)               | Inventory               |
-| Y        | End combat                      | Pip-Boy                 |
+| Y        | Highlight (hold)                | Pip-Boy                 |
 | L1       | Right click                     | Quickload                |
 | R1       | Left click                      | Quicksave                |
 | L2       | Switch active item              | Automap                 |
 | R2       | Switch item mode                | Center camera on player |
-| Start    | Enter / OK                      | -                        |
+| Start    | Enter / OK / End combat         | -                        |
 | Select   | *(modifier)*                    | -                        |
 | Menu key | Esc / Exit / Return / Open Menu | -                        |
+
+Holding **Y** activates sfall features bound to Shift, such as the Item/Critter Highlighting from RPU
+(configured in `mods/sfall-mods.ini`).
 
 The Menu key fires Esc on **release**, not on press - this means the OnionOS Menu+Power screenshot
 combo won't accidentally exit the game before you can take a screenshot.
@@ -148,12 +151,20 @@ the Options menu at any time in-game.
 
 - The mouse cursor moves noticeably slower on screens with an open text field (character creation,
 save/load naming, etc.). This one tracks down to the main fork, so we'll have to deal with it for now.
-- Sometimes, the game crashes when skipping intro videos. Still under investigation.
-- Also sometimes, controls get weird and some keys stop working or start generating the wrong input. This is caused by a conflict with Sfall, included in Restoration Project Updated (RPU). For now, go to "Roms/PORTS/Games/Fallout 2/Mods/" and open "sfall-mods.ini". Right at the beggining, in [Highlighting], change "Key=42" to "Key=0" to disable item highlighting 'till I fix it.
+- Sometimes, the game crashes when skipping intro videos. Still under investigation. If the game
+crashes, a `crash_log.txt` file is created in the game folder - please send it along with your
+report, it helps a lot to find the cause.
 
 
 ## Changelog
 
+- **v1.1.2** - The Y button now acts as Shift for sfall features, so the Item/Critter Highlighting
+  from RPU is used by holding Y instead of X. This fixes X (slow mouse) triggering highlighting and
+  the control conflicts it caused. If you changed `Key=42` to `Key=0` in `mods/sfall-mods.ini` as a
+  workaround, you can change it back to `Key=42`. Y no longer ends combat (use Start instead). Added
+  a safeguard against the Select button occasionally getting stuck, and a crash logger that writes
+  `crash_log.txt` to the game folder. Updated the Quick Guide with the new Y function and the text
+  entry controls.
 - **v1.1.1** - Fixed an intermittent crash caused by an audio buffer over-read near the end of a
   sound buffer. Fixing this crash also eliminated the constant audio latency that was previously
   a known issue. Updated the Quick Guide help screen image.
@@ -239,8 +250,14 @@ The final ARM (armhf) binary `fallout2-ce` will be in `build/`.
 - **`src/input.cc`** - the full physical-button-to-game-action remapping, the Select-modifier layer,
   the on-device text entry system, key-repeat debounce for this hardware's key delivery quirks, and
   makes the Menu key's Esc action fire on key-release instead of key-press (so the OnionOS Menu+Power
-  screenshot combo doesn't exit the game before Power can be pressed) - all layered on top of, not
-  replacing, this fork's own sfall key-hook system.
+  screenshot combo doesn't exit the game before Power can be pressed). It also adds a watchdog that
+  stops treating Select as held if this hardware fails to deliver its key-up event, and reports the
+  Y button to sfall's KEYPRESS hook as Shift, while keeping X (physically Shift, used for slow mouse)
+  out of it. All of this is layered on top of, not replacing, this fork's own sfall key-hook system.
+- **`src/sfall_kb_helpers.cc`** - sfall's `key_pressed()` answers queries for Shift with the Y
+  button's state, matching the hook change above.
+- **`src/crash_handler.cc`, `src/win32.cc`** - installs a signal handler that writes a backtrace to
+  `crash_log.txt` when the game crashes, so crashes during normal play can be diagnosed later.
 - **`src/debug.cc`** - `debugPrint()` only logged through `SDL_Log` in debug builds upstream, which
   meant this fork's own `showMessageBox()` calls (used for fatal startup errors) were silently
   swallowed in a release build, since this hardware's SDL2 driver doesn't implement message boxes
