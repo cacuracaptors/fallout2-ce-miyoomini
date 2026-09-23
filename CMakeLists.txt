@@ -275,6 +275,8 @@ set(FALLOUT_ENGINE_SOURCES
 set(FALLOUT_PLATFORM_SOURCES
     "src/audio_engine.cc"
     "src/audio_engine.h"
+    "src/crash_handler.cc"
+    "src/crash_handler.h"
     "src/delay.cc"
     "src/delay.h"
     "src/fps_limiter.cc"

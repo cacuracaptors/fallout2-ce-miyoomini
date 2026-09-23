@@ -25,6 +25,7 @@
 #include "window_manager.h"
 
 #include "scan_unimplemented.h"
+#include "crash_handler.h"
 
 #if __APPLE__ && TARGET_OS_IOS
 #include "platform/ios/paths.h"
@@ -52,6 +53,8 @@ const char* getMacOsBundleResourcesPath()
 
 int main(int argc, char* argv[])
 {
+    installCrashHandler();
+
     scanUnimplementdParseCommandLineArguments(argc, argv);
 
     int rc;

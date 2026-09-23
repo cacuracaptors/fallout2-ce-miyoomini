@@ -310,6 +310,15 @@ bool sfall_kb_is_key_pressed(int key)
         return false;
     }
 
+    // Miyoo Mini: the X button is physically wired to LSHIFT and is used
+    // for "slow mouse", so scripts polling Shift (e.g. sfall's
+    // gl_highlighting, Key=42) would fire whenever X is held. Answer Shift
+    // queries with the Y button (physically LALT) instead, so Y becomes
+    // the dedicated Shift-style modifier for scripts and X stays mouse-only.
+    if (scancode == SDL_SCANCODE_LSHIFT) {
+        scancode = SDL_SCANCODE_LALT;
+    }
+
     const Uint8* state = SDL_GetKeyboardState(nullptr);
     return state[scancode] != 0;
 }

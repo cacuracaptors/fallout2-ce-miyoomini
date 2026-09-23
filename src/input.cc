@@ -1,6 +1,7 @@
 #include "input.h"
 
 #include <SDL.h>
+#include <stdio.h>
 #include <lodepng.h>
 
 #include "audio_engine.h"
@@ -86,6 +87,14 @@ static int gScreenshotKeyCode;
 static bool gMiyooKeyDownState[SDL_NUM_SCANCODES] = { false };
 static Uint32 gMiyooLastFireTime[SDL_NUM_SCANCODES] = { 0 };
 static bool gMiyooArrowForwardedDown[SDL_NUM_SCANCODES] = { false };
+// Timestamp of the last confirmed *fresh* keydown for Select (RCTRL).
+// Used as a watchdog: if this hardware's input driver ever fails to
+// deliver a keyup event for Select (observed as combos misfiring long
+// after the button was physically released), we stop treating it as
+// held after SELECT_WATCHDOG_MS of no fresh confirmation, rather than
+// leaving it stuck for the rest of the session.
+static Uint32 gMiyooSelectPressTime = 0;
+static const Uint32 SELECT_WATCHDOG_MS = 5000;
 // END Miyoo Mini key debounce patch
 
 // BEGIN Miyoo Mini virtual keyboard patch
@@ -1087,6 +1096,7 @@ void _GNW95_process_message()
         case SDL_KEYUP: {
             SDL_Scancode sc = e.key.keysym.scancode;
             bool isDown = (e.key.state == SDL_PRESSED);
+
             bool syntheticSfallKey = sfall_kb_consume_synthetic_key_event(sc, isDown);
 
             if (keyboardIsDisabled()) {
@@ -1094,7 +1104,21 @@ void _GNW95_process_message()
             }
 
             if (!e.key.repeat && !syntheticSfallKey) {
-                int keyOverride = sfall_kb_handle_key_pressed(sc, isDown);
+                // Miyoo Mini: sfall scripts (e.g. gl_highlighting) register
+                // on the KEYPRESS hook and react to Shift (DX 42). X is
+                // physically LSHIFT but is our "slow mouse" button, so it
+                // is not reported to the hook at all; Y (physically LALT)
+                // is reported to the hook as LSHIFT instead, making Y the
+                // Shift-style button for scripts.
+                int keyOverride = -1;
+                if (sc == SDL_SCANCODE_LALT) {
+                    int yOverride = sfall_kb_handle_key_pressed(SDL_SCANCODE_LSHIFT, isDown);
+                    if (yOverride == SDL_SCANCODE_UNKNOWN) {
+                        keyOverride = SDL_SCANCODE_UNKNOWN;
+                    }
+                } else if (sc != SDL_SCANCODE_LSHIFT) {
+                    keyOverride = sfall_kb_handle_key_pressed(sc, isDown);
+                }
                 if (keyOverride == SDL_SCANCODE_UNKNOWN) {
                     break;
                 }
@@ -1106,6 +1130,12 @@ void _GNW95_process_message()
             bool wasKeyDown = gMiyooKeyDownState[sc];
             gMiyooKeyDownState[sc] = isDown;
             bool isPhysicalRepeat = isDown && wasKeyDown;
+
+            if (sc == SDL_SCANCODE_RCTRL && isDown && !wasKeyDown) {
+                gMiyooSelectPressTime = SDL_GetTicks();
+            }
+
+
 
             if (isPhysicalRepeat) {
                 break;
@@ -1204,6 +1234,13 @@ void _GNW95_process_message()
 
             const Uint8* liveKeys = SDL_GetKeyboardState(NULL);
             bool selectHeld = liveKeys[SDL_SCANCODE_RCTRL] != 0;
+            if (selectHeld && SDL_GetTicks() - gMiyooSelectPressTime > SELECT_WATCHDOG_MS) {
+                // Select has been reported held for too long without a
+                // fresh keydown - treat it as stuck/released rather than
+                // risk every other button misfiring as a Select-combo for
+                // the rest of the session.
+                selectHeld = false;
+            }
             bool suppress = false;
             SDL_Scancode remapped = sc;
 
@@ -1225,7 +1262,11 @@ void _GNW95_process_message()
                     remapped = SDL_SCANCODE_SPACE;
                     break;
                 case SDL_SCANCODE_LALT:
-                    remapped = SDL_SCANCODE_RETURN;
+                    // Y: no engine action of its own. It works as the
+                    // Shift-style modifier for sfall scripts (e.g. Item
+                    // Highlighting) via sfall_kb_is_key_pressed(). End
+                    // Combat remains available on Start.
+                    suppress = true;
                     break;
                 case SDL_SCANCODE_TAB:
                     remapped = SDL_SCANCODE_B;
