@@ -1,3 +1,4 @@
+#include <cstdarg>  // Miyoo Mini key log (vsnprintf)
 #include "input.h"
 
 #include <SDL.h>
@@ -95,6 +96,82 @@ static bool gMiyooArrowForwardedDown[SDL_NUM_SCANCODES] = { false };
 // leaving it stuck for the rest of the session.
 static Uint32 gMiyooSelectPressTime = 0;
 static const Uint32 SELECT_WATCHDOG_MS = 5000;
+// Miyoo Mini: key log. Every button event and what the game did with it is
+// written to keylog.txt in the game folder, one line at a time (flushed, so
+// it survives the game being closed abruptly). Over 2 MB it becomes
+// keylog.old.txt and a new file starts.
+static FILE* gMiyooKeyLog = NULL;
+static long gMiyooKeyLogSize = 0;
+
+static void miyooKeyLog(const char* fmt, ...)
+{
+    // Off unless keylog_enable.txt exists in the game folder, so a player
+    // hitting a button problem can turn it on without a special build.
+    static int enabled = -1;
+    if (enabled < 0) {
+        FILE* flag = fopen("keylog_enable.txt", "r");
+        enabled = flag != NULL ? 1 : 0;
+        if (flag != NULL) {
+            fclose(flag);
+        }
+    }
+    if (!enabled) {
+        return;
+    }
+
+    if (gMiyooKeyLog == NULL || gMiyooKeyLogSize > 2 * 1024 * 1024) {
+        if (gMiyooKeyLog != NULL) {
+            fclose(gMiyooKeyLog);
+            remove("keylog.old.txt");
+            rename("keylog.txt", "keylog.old.txt");
+        }
+        gMiyooKeyLog = fopen("keylog.txt", "w");
+        gMiyooKeyLogSize = 0;
+        if (gMiyooKeyLog == NULL) {
+            return;
+        }
+    }
+    char buf[256];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    gMiyooKeyLogSize += fprintf(gMiyooKeyLog, "%9u %s\n", (unsigned)SDL_GetTicks(), buf);
+    fflush(gMiyooKeyLog);
+}
+static Uint32 gMiyooLastDownTime[SDL_NUM_SCANCODES] = { 0 };
+
+// The engine empties SDL's event queue in a few places (inputEventQueueReset,
+// keyboardDeviceReset) without these handlers seeing the events, so key-ups
+// were lost: the button stayed marked as held and its next press was thrown
+// away as a hardware repeat. SDL's own key state is still right, so copy it
+// back, and release any arrow the game still believes is held.
+void miyooResyncKeyState()
+{
+    const Uint8* live = SDL_GetKeyboardState(NULL);
+    int fixedKeys = 0;
+    for (int i = 0; i < SDL_NUM_SCANCODES; i++) {
+        const bool down = live[i] != 0;
+        if (gMiyooKeyDownState[i] != down) {
+            gMiyooKeyDownState[i] = down;
+            fixedKeys++;
+        }
+    }
+    static const SDL_Scancode arrows[4] = { SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN };
+    for (int i = 0; i < 4; i++) {
+        if (gMiyooArrowForwardedDown[arrows[i]] && !live[arrows[i]]) {
+            KeyboardData kd;
+            kd.key = arrows[i];
+            kd.down = false;
+            _GNW95_process_key(&kd);
+            gMiyooArrowForwardedDown[arrows[i]] = false;
+            fixedKeys++;
+        }
+    }
+    if (fixedKeys > 0) {
+        miyooKeyLog("  input flushed by the game: key state resynced (%d fixed)", fixedKeys);
+    }
+}
 // END Miyoo Mini key debounce patch
 
 // BEGIN Miyoo Mini virtual keyboard patch
@@ -382,6 +459,7 @@ void inputEventQueueReset()
     SDL_Event e;
     while (SDL_PollEvent(&e)) { } // Clear all input events
     sfall_kb_clear_synthetic_key_events();
+    miyooResyncKeyState();
 }
 
 // 0x4C8D1C
@@ -1097,9 +1175,33 @@ void _GNW95_process_message()
             SDL_Scancode sc = e.key.keysym.scancode;
             bool isDown = (e.key.state == SDL_PRESSED);
 
+            // Track each physical button before anything can drop the event
+            // (keyboard disabled, an sfall hook consuming it). A key-up lost
+            // there left the button marked as held, and every later press was
+            // then discarded as a hardware repeat: Start/Select "stopped
+            // working" until the game was restarted.
+            const Uint32 nowTicks = SDL_GetTicks();
+            bool wasKeyDown = gMiyooKeyDownState[sc];
+            // Hardware repeats arrive in quick succession. A second key-down
+            // long after the first means its key-up was lost somewhere: take
+            // it as a new press rather than throwing it away.
+            if (isDown && wasKeyDown && nowTicks - gMiyooLastDownTime[sc] > 500) {
+                miyooKeyLog("  key-up was lost: taken as a new press");
+                wasKeyDown = false;
+            }
+            if (isDown) {
+                gMiyooLastDownTime[sc] = nowTicks;
+            }
+            gMiyooKeyDownState[sc] = isDown;
+            if (sc == SDL_SCANCODE_RCTRL && isDown && !wasKeyDown) {
+                gMiyooSelectPressTime = SDL_GetTicks();
+            }
+            miyooKeyLog("%s %s%s", SDL_GetScancodeName(sc), isDown ? "down" : "up", e.key.repeat ? " (sdl repeat)" : "");
+
             bool syntheticSfallKey = sfall_kb_consume_synthetic_key_event(sc, isDown);
 
             if (keyboardIsDisabled()) {
+                miyooKeyLog("  dropped: keyboard disabled");
                 break;
             }
 
@@ -1116,28 +1218,28 @@ void _GNW95_process_message()
                     if (yOverride == SDL_SCANCODE_UNKNOWN) {
                         keyOverride = SDL_SCANCODE_UNKNOWN;
                     }
-                } else if (sc != SDL_SCANCODE_LSHIFT) {
+                } else if (sc != SDL_SCANCODE_LSHIFT && sc != SDL_SCANCODE_T && sc != SDL_SCANCODE_E) {
+                    // T and E are R1/L1 - the mouse buttons here. RPU's Party Orders
+                    // binds its "pick up nearby items" order to T, so every left
+                    // click also made the player grab everything around.
                     keyOverride = sfall_kb_handle_key_pressed(sc, isDown);
                 }
                 if (keyOverride == SDL_SCANCODE_UNKNOWN) {
+                    miyooKeyLog("  dropped: consumed by sfall");
                     break;
                 }
                 if (keyOverride != -1) {
+                    miyooKeyLog("  sfall override -> %s", SDL_GetScancodeName((SDL_Scancode)keyOverride));
                     sc = (SDL_Scancode)keyOverride;
                 }
             }
 
-            bool wasKeyDown = gMiyooKeyDownState[sc];
-            gMiyooKeyDownState[sc] = isDown;
             bool isPhysicalRepeat = isDown && wasKeyDown;
-
-            if (sc == SDL_SCANCODE_RCTRL && isDown && !wasKeyDown) {
-                gMiyooSelectPressTime = SDL_GetTicks();
-            }
 
 
 
             if (isPhysicalRepeat) {
+                miyooKeyLog("  dropped: repeat (already held)");
                 break;
             }
 
@@ -1233,12 +1335,16 @@ void _GNW95_process_message()
             }
 
             const Uint8* liveKeys = SDL_GetKeyboardState(NULL);
-            bool selectHeld = liveKeys[SDL_SCANCODE_RCTRL] != 0;
+            // Select as of this event, not SDL's current state: when the game
+            // is busy, events are handled late, in a burst, and the live state
+            // already describes later presses and releases.
+            bool selectHeld = gMiyooKeyDownState[SDL_SCANCODE_RCTRL];
             if (selectHeld && SDL_GetTicks() - gMiyooSelectPressTime > SELECT_WATCHDOG_MS) {
                 // Select has been reported held for too long without a
                 // fresh keydown - treat it as stuck/released rather than
                 // risk every other button misfiring as a Select-combo for
                 // the rest of the session.
+                miyooKeyLog("  select watchdog: select treated as released");
                 selectHeld = false;
             }
             bool suppress = false;
@@ -1315,6 +1421,10 @@ void _GNW95_process_message()
                 }
             }
 
+            miyooKeyLog("  select=%d live(start=%d select=%d) -> %s%s", selectHeld ? 1 : 0,
+                liveKeys[SDL_SCANCODE_RETURN] ? 1 : 0, liveKeys[SDL_SCANCODE_RCTRL] ? 1 : 0,
+                suppress ? "suppressed" : SDL_GetScancodeName(remapped), (selectHeld && !suppress) ? " (combo)" : "");
+
             if (!suppress) {
                 bool isContinuousArrow = (sc == SDL_SCANCODE_LEFT || sc == SDL_SCANCODE_RIGHT
                     || sc == SDL_SCANCODE_UP || sc == SDL_SCANCODE_DOWN);
@@ -1325,6 +1435,8 @@ void _GNW95_process_message()
                         if (nowMs - gMiyooLastFireTime[sc] >= cooldownMs) {
                             gMiyooLastFireTime[sc] = nowMs;
                             miyooSendSyntheticKey(remapped);
+                        } else {
+                            miyooKeyLog("  combo skipped: cooldown");
                         }
                     }
                 } else {

@@ -154,6 +154,10 @@ save/load naming, etc.). This one tracks down to the main fork, so we'll have to
 
 ## Changelog
 
+- **v1.1.3** - Fixed buttons (notably Start and Select) sometimes ignoring presses, especially in
+  long sessions. Fixed the player picking up nearby items by himself on every R1 click (a conflict
+  with the Party Orders mod bundled with RPU). Crash reports (crash_log.txt) now show exactly where
+  a crash happened.
 - **v1.1.2** - The Y button now acts as Shift for sfall features, so the Item/Critter Highlighting
   from RPU is used by holding Y instead of X. This fixes X (slow mouse) triggering highlighting and
   the control conflicts it caused. If you changed `Key=42` to `Key=0` in `mods/sfall-mods.ini` as a

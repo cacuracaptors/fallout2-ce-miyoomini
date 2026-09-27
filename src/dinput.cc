@@ -136,11 +136,14 @@ bool keyboardDeviceUnacquire()
     return true;
 }
 
+void miyooResyncKeyState(); // input.cc
+
 // 0x4E05FC
 bool keyboardDeviceReset()
 {
     SDL_FlushEvents(SDL_KEYDOWN, SDL_TEXTINPUT);
     sfall_kb_clear_synthetic_key_events();
+    miyooResyncKeyState();
     return true;
 }
 

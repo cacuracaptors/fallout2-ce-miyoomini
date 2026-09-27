@@ -319,6 +319,13 @@ bool sfall_kb_is_key_pressed(int key)
         scancode = SDL_SCANCODE_LALT;
     }
 
+    // Miyoo Mini: T and E are R1/L1, used as the mouse buttons. Scripts
+    // polling them (RPU's Party Orders "pick up" order is bound to T) would
+    // fire on every click, so never report them as held.
+    if (scancode == SDL_SCANCODE_T || scancode == SDL_SCANCODE_E) {
+        return false;
+    }
+
     const Uint8* state = SDL_GetKeyboardState(nullptr);
     return state[scancode] != 0;
 }

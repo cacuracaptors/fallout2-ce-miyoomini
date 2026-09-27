@@ -413,3 +413,6 @@ CLAUDE.md
 GEMINI.md
 opencode.jsonbuild/
 build-native/
+
+# local build folders
+build-*/
