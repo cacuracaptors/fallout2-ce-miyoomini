@@ -151,10 +151,6 @@ the Options menu at any time in-game.
 
 - The mouse cursor moves noticeably slower on screens with an open text field (character creation,
 save/load naming, etc.). This one tracks down to the main fork, so we'll have to deal with it for now.
-- Sometimes, the game crashes when skipping intro videos. Still under investigation. If the game
-crashes, a `crash_log.txt` file is created in the game folder - please send it along with your
-report, it helps a lot to find the cause.
-
 
 ## Changelog
 
