@@ -32,6 +32,11 @@ extern bool gProgramIsActive;
 static bool soundBufferIsValid(int soundBufferIndex);
 static void audioEngineMixin(void* userData, Uint8* stream, int length);
 
+// Miyoo Mini: source frames converted per SDL_AudioStreamPut call. One frame
+// per call made every call pay the whole conversion setup; 32 frames (1.5 ms
+// at 22050 Hz) keep the read position well inside the 15 ms write lead.
+static const int kAudioEngineMixChunkFrames = 32;
+
 static SDL_AudioSpec gAudioEngineSpec;
 static SDL_AudioDeviceID gAudioEngineDeviceId = -1;
 static AudioEngineSoundBuffer gAudioEngineSoundBuffers[AUDIO_ENGINE_SOUND_BUFFERS];
@@ -69,12 +74,11 @@ static void audioEngineMixin(void* userData, Uint8* stream, int length)
                     remaining = sizeof(buffer);
                 }
 
-                // TODO: Make something better than frame-by-frame convertion.
+                // Convert a few frames per call (see kAudioEngineMixChunkFrames).
                 // Clamp to the bytes actually remaining in the buffer to avoid
-                // reading past its end when pos is close to size (fixes an
-                // intermittent crash on the Miyoo Mini Plus).
+                // reading past its end when pos is close to size.
                 int available = soundBuffer->size - soundBuffer->pos;
-                int frameSize = srcFrameSize;
+                int frameSize = srcFrameSize * kAudioEngineMixChunkFrames;
                 if (frameSize > available) {
                     frameSize = available;
                 }

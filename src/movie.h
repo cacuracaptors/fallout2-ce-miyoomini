@@ -39,6 +39,7 @@ void _movieUpdate();
 int _moviePlaying();
 void movieHandleRendererReset();
 void movieRenderDirectOverlay();
+bool movieDirectOverlayIsActive();
 
 } // namespace fallout
 

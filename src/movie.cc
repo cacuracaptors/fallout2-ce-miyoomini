@@ -324,6 +324,11 @@ void movieRenderDirectOverlay()
     SDL_RenderCopy(gSdlRenderer, movieDirectOverlay.texture, nullptr, &movieDirectOverlay.dstRect);
 }
 
+bool movieDirectOverlayIsActive()
+{
+    return movieDirectOverlay.active && movieDirectOverlay.texture != nullptr;
+}
+
 void movieHandleRendererReset()
 {
     movieDirectOverlayDestroy();

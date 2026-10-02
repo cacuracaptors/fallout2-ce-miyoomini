@@ -154,6 +154,12 @@ save/load naming, etc.). This one tracks down to the main fork, so we'll have to
 
 ## Changelog
 
+- **v1.1.4** - Fixed the occasional crash when skipping the intro videos quickly (the sound engine's
+  thread locks were not working on this device). Lower CPU use, and so better battery life, on
+  menus, dialogs, the inventory, the world map and most maps: the screen is only redrawn when
+  something changes, color cycling (water, fire, monitors) no longer forces full-screen redraws when
+  none of those colors are on screen, and audio mixing is about 10x lighter. Map and save loading is
+  also noticeably faster.
 - **v1.1.3** - Fixed buttons (notably Start and Select) sometimes ignoring presses, especially in
   long sessions. Fixed the player picking up nearby items by himself on every R1 click (a conflict
   with the Party Orders mod bundled with RPU). Crash reports (crash_log.txt) now show exactly where
@@ -262,6 +268,18 @@ The final ARM (armhf) binary `fallout2-ce` will be in `build/`.
   meant this fork's own `showMessageBox()` calls (used for fatal startup errors) were silently
   swallowed in a release build, since this hardware's SDL2 driver doesn't implement message boxes
   either. Logging is now unconditional.
+- **`CMakeLists.txt`** - links the game directly to `libpthread`. On this device's older glibc
+  (2.28) the thread library is separate from libc, and without a direct link every `std::mutex`
+  lock in the game silently did nothing, letting the audio and main threads corrupt each other's
+  memory (the crash when skipping videos).
+- **`src/svga.cc`** - only presents a new frame when something on screen changed (and at least
+  every 250 ms), and skips the full-screen palette conversion when color cycling changes colors
+  that are not on screen. Partial texture uploads are not used: this device's SDL2 renderer
+  ignores the position of a partial update.
+- **`src/audio_engine.cc`** - the mixer converts 32 sample frames per call instead of one, and
+  never reads past the end of a sound buffer.
+- **`src/movie.cc`** - lets the renderer know when a movie is shown as an overlay, so it is
+  always presented.
 - **`data/art/intrface/helpscrn.frm`** (+ matching `.pal`) - a Miyoo Mini-specific replacement for
   the in-game "Quick Guide" screen (pictured above), shown in place of the PC keyboard reference this
   fork normally ships (or the one added by RPU, if installed) via this engine's `master_patches`

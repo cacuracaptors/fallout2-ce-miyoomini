@@ -42,6 +42,130 @@ SDL_Renderer* gSdlRenderer = nullptr;
 SDL_Texture* gSdlTexture = nullptr;
 SDL_Surface* gSdlTextureSurface = nullptr;
 
+// Miyoo Mini: part of gSdlTextureSurface changed since the last present
+// (w == 0 means nothing changed). renderPresent() skips presenting when
+// nothing changed, which saves CPU and battery on the many static screens
+// of the game.
+static SDL_Rect gScreenDirtyRect = { 0, 0, 0, 0 };
+static Uint32 gLastPresentTicks = 0;
+
+// Safety net: present at least this often even when nothing seems to change.
+static const Uint32 kForcedPresentIntervalMs = 250;
+
+static void screenMarkDirty(int x, int y, int width, int height)
+{
+    if (gSdlTextureSurface == nullptr) {
+        return;
+    }
+
+    int right = x + width;
+    int bottom = y + height;
+    if (x < 0) {
+        x = 0;
+    }
+    if (y < 0) {
+        y = 0;
+    }
+    if (right > gSdlTextureSurface->w) {
+        right = gSdlTextureSurface->w;
+    }
+    if (bottom > gSdlTextureSurface->h) {
+        bottom = gSdlTextureSurface->h;
+    }
+    if (right <= x || bottom <= y) {
+        return;
+    }
+
+    if (gScreenDirtyRect.w != 0) {
+        int oldRight = gScreenDirtyRect.x + gScreenDirtyRect.w;
+        int oldBottom = gScreenDirtyRect.y + gScreenDirtyRect.h;
+        if (gScreenDirtyRect.x < x) {
+            x = gScreenDirtyRect.x;
+        }
+        if (gScreenDirtyRect.y < y) {
+            y = gScreenDirtyRect.y;
+        }
+        if (oldRight > right) {
+            right = oldRight;
+        }
+        if (oldBottom > bottom) {
+            bottom = oldBottom;
+        }
+    }
+
+    gScreenDirtyRect.x = x;
+    gScreenDirtyRect.y = y;
+    gScreenDirtyRect.w = right - x;
+    gScreenDirtyRect.h = bottom - y;
+}
+
+static void screenMarkDirtyAll()
+{
+    if (gSdlTextureSurface != nullptr) {
+        screenMarkDirty(0, 0, gSdlTextureSurface->w, gSdlTextureSurface->h);
+    }
+}
+
+// Miyoo Mini: changes every time the 8-bit screen (gSdlSurface) changes.
+static unsigned int gScreenContentVersion = 1;
+
+struct ScreenPaletteRangeCache {
+    SDL_Surface* surface;
+    unsigned int version;
+    int start;
+    int count;
+    bool used;
+};
+
+static ScreenPaletteRangeCache gScreenPaletteRangeCache[4];
+static int gScreenPaletteRangeCacheNext = 0;
+
+// Returns true when some pixel of the 8-bit screen uses a palette index in
+// [start, start + count). The answer is remembered until the screen changes,
+// so color cycling over a static screen costs almost nothing.
+static bool screenUsesPaletteRange(int start, int count)
+{
+    if (gSdlSurface == nullptr || count <= 0) {
+        return false;
+    }
+
+    if (start <= 0 && start + count >= 256) {
+        return true;
+    }
+
+    for (int index = 0; index < 4; index++) {
+        ScreenPaletteRangeCache* entry = &(gScreenPaletteRangeCache[index]);
+        if (entry->surface == gSdlSurface && entry->version == gScreenContentVersion
+            && entry->start == start && entry->count == count) {
+            return entry->used;
+        }
+    }
+
+    bool used = false;
+    unsigned int low = static_cast<unsigned int>(start);
+    unsigned int range = static_cast<unsigned int>(count);
+    const unsigned char* row = static_cast<const unsigned char*>(gSdlSurface->pixels);
+    for (int y = 0; y < gSdlSurface->h && !used; y++) {
+        for (int x = 0; x < gSdlSurface->w; x++) {
+            if (static_cast<unsigned int>(row[x]) - low < range) {
+                used = true;
+                break;
+            }
+        }
+        row += gSdlSurface->pitch;
+    }
+
+    ScreenPaletteRangeCache* entry = &(gScreenPaletteRangeCache[gScreenPaletteRangeCacheNext]);
+    gScreenPaletteRangeCacheNext = (gScreenPaletteRangeCacheNext + 1) % 4;
+    entry->surface = gSdlSurface;
+    entry->version = gScreenContentVersion;
+    entry->start = start;
+    entry->count = count;
+    entry->used = used;
+
+    return used;
+}
+
 // TODO: Remove once migration to update-render cycle is completed.
 FpsLimiter sharedFpsLimiter;
 
@@ -249,6 +373,16 @@ void directDrawSetPaletteInRange(unsigned char* palette, int start, int count)
         }
 
         SDL_SetPaletteColors(gSdlSurface->format->palette, colors, start, count);
+
+        // Miyoo Mini: color cycling changes a few palette entries many times
+        // per second. When none of them is on screen the image does not change,
+        // so the whole-screen conversion (and the present) is skipped. Later
+        // blits already use the new colors.
+        if (!screenUsesPaletteRange(start, count)) {
+            return;
+        }
+
+        screenMarkDirtyAll();
         SDL_BlitSurface(gSdlSurface, nullptr, gSdlTextureSurface, nullptr);
     }
 }
@@ -267,6 +401,7 @@ void directDrawSetPalette(unsigned char* palette)
         }
 
         SDL_SetPaletteColors(gSdlSurface->format->palette, colors, 0, 256);
+        screenMarkDirtyAll();
         SDL_BlitSurface(gSdlSurface, nullptr, gSdlTextureSurface, nullptr);
     }
 }
@@ -308,6 +443,8 @@ void _GNW95_ShowRect(unsigned char* src, int srcPitch, int unused, int srcX, int
     destRect.x = destX;
     destRect.y = destY;
     SDL_BlitSurface(gSdlSurface, &srcRect, gSdlTextureSurface, &destRect);
+    screenMarkDirty(destX, destY, srcWidth, srcHeight);
+    gScreenContentVersion++;
 }
 
 // Clears drawing surface.
@@ -326,6 +463,8 @@ void _GNW95_zero_vid_mem()
     }
 
     SDL_BlitSurface(gSdlSurface, nullptr, gSdlTextureSurface, nullptr);
+    screenMarkDirtyAll();
+    gScreenContentVersion++;
 }
 
 int screenGetWidth()
@@ -382,6 +521,9 @@ static bool createRenderer(int width, int height)
     if (gSdlTextureSurface == nullptr) {
         return false;
     }
+
+    // New texture: the first present must upload everything.
+    screenMarkDirtyAll();
 
     return true;
 }
@@ -466,16 +608,34 @@ void renderFpsCounter()
     rect.w = width;
     rect.h = height;
     SDL_BlitSurface(gSdlSurface, &rect, gSdlTextureSurface, &rect);
+    screenMarkDirty(rect.x, rect.y, rect.w, rect.h);
+    gScreenContentVersion++;
 }
 
 void renderPresent()
 {
-    SDL_UpdateTexture(gSdlTexture, nullptr, gSdlTextureSurface->pixels, gSdlTextureSurface->pitch);
+    // Miyoo Mini: nothing changed since the last present, so the screen
+    // already shows the right image. A movie shown as an overlay changes on
+    // its own, so it is always presented.
+    Uint32 nowTicks = SDL_GetTicks();
+    if (gScreenDirtyRect.w == 0 && !movieDirectOverlayIsActive()
+        && nowTicks - gLastPresentTicks < kForcedPresentIntervalMs) {
+        return;
+    }
+
+    if (gScreenDirtyRect.w != 0) {
+        // The whole texture is uploaded: the Miyoo Mini renderer ignores the
+        // position of a partial update (it always writes at the top-left corner).
+        SDL_UpdateTexture(gSdlTexture, nullptr, gSdlTextureSurface->pixels, gSdlTextureSurface->pitch);
+        gScreenDirtyRect.w = 0;
+        gScreenDirtyRect.h = 0;
+    }
     SDL_RenderClear(gSdlRenderer);
     SDL_RenderCopy(gSdlRenderer, gSdlTexture, nullptr, nullptr);
     // render movie SDL texture if present
     movieRenderDirectOverlay();
     SDL_RenderPresent(gSdlRenderer);
+    gLastPresentTicks = SDL_GetTicks();
 }
 
 } // namespace fallout
