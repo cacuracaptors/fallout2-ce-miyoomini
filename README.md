@@ -154,7 +154,7 @@ save/load naming, etc.). This one tracks down to the main fork, so we'll have to
 
 ## Changelog
 
-- **v1.1.4** - Fixed the occasional crash when skipping the intro videos quickly (the sound engine's
+- **v1.1.4** - Fixed the not so rare crash when skipping videos and dialog audio quickly (the sound engine's
   thread locks were not working on this device). Lower CPU use, and so better battery life, on
   menus, dialogs, the inventory, the world map and most maps: the screen is only redrawn when
   something changes, color cycling (water, fire, monitors) no longer forces full-screen redraws when
