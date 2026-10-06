@@ -109,15 +109,42 @@ bool mouseDeviceGetData(MouseData* mouseState)
     gMouseWheelDeltaY = 0;
 
     // BEGIN Miyoo Mini D-pad-as-mouse patch
+    // The cursor speed is in pixels per second, like a real mouse, so it is
+    // the same on every screen. It used to move a fixed number of pixels each
+    // time the game read the mouse, so it slowed down wherever the game loop
+    // runs slower (the 24 fps text entry screens, busy maps).
+    static Uint32 padLastTicks = 0;
+    static float padRemainderX = 0.0f;
+    static float padRemainderY = 0.0f;
+    Uint32 padNow = SDL_GetTicks();
+    Uint32 padElapsed = padLastTicks != 0 ? padNow - padLastTicks : 0;
+    padLastTicks = padNow;
+    if (padElapsed > 100) {
+        // Long gap (loading, a pause): do not jump.
+        padElapsed = 100;
+    }
+
     const Uint8* padState = SDL_GetKeyboardState(NULL);
     if (!padState[SDL_SCANCODE_RCTRL]) {
-        int padStep = padState[SDL_SCANCODE_LSHIFT] ? 2 : 6;
-        if (padState[SDL_SCANCODE_LEFT]) mouseState->x -= padStep;
-        if (padState[SDL_SCANCODE_RIGHT]) mouseState->x += padStep;
-        if (padState[SDL_SCANCODE_UP]) mouseState->y -= padStep;
-        if (padState[SDL_SCANCODE_DOWN]) mouseState->y += padStep;
+        // 360 and 120 pixels per second: the old 6 and 2 pixels per read at
+        // 60 reads per second.
+        float padSpeed = padState[SDL_SCANCODE_LSHIFT] ? 120.0f : 360.0f;
+        int padDirX = (padState[SDL_SCANCODE_RIGHT] ? 1 : 0) - (padState[SDL_SCANCODE_LEFT] ? 1 : 0);
+        int padDirY = (padState[SDL_SCANCODE_DOWN] ? 1 : 0) - (padState[SDL_SCANCODE_UP] ? 1 : 0);
+        float padDistance = padSpeed * static_cast<float>(padElapsed) / 1000.0f;
+        padRemainderX = padDirX != 0 ? padRemainderX + padDirX * padDistance : 0.0f;
+        padRemainderY = padDirY != 0 ? padRemainderY + padDirY * padDistance : 0.0f;
+        int padStepX = static_cast<int>(padRemainderX);
+        int padStepY = static_cast<int>(padRemainderY);
+        padRemainderX -= padStepX;
+        padRemainderY -= padStepY;
+        mouseState->x += padStepX;
+        mouseState->y += padStepY;
         if (padState[SDL_SCANCODE_T]) mouseState->buttons[0] = true;
         if (padState[SDL_SCANCODE_E]) mouseState->buttons[1] = true;
+    } else {
+        padRemainderX = 0.0f;
+        padRemainderY = 0.0f;
     }
     // END Miyoo Mini D-pad-as-mouse patch
 

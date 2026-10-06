@@ -147,13 +147,10 @@ own text field, the same system used in our [Fallout (1997) port](https://github
 A Miyoo-specific "Quick Guide" screen with this same control scheme (pictured above) is available from
 the Options menu at any time in-game.
 
-## Known issues
-
-- The mouse cursor moves noticeably slower on screens with an open text field (character creation,
-save/load naming, etc.). This one tracks down to the main fork, so we'll have to deal with it for now.
-
 ## Changelog
 
+- **v1.1.5** - The D-pad mouse cursor now moves at the same speed on every screen: it is no longer
+  slower on screens with a text field (character creation, save names, etc.) or in busy maps.
 - **v1.1.4** - Fixed the not so rare crash when skipping videos and dialog audio quickly (the sound engine's
   thread locks were not working on this device). Lower CPU use, and so better battery life, on
   menus, dialogs, the inventory, the world map and most maps: the screen is only redrawn when
@@ -253,6 +250,8 @@ The final ARM (armhf) binary `fallout2-ce` will be in `build/`.
 - **`src/dinput.cc`** - makes mouse "relative mode" initialization non-fatal (this device's SDL2
   build doesn't implement it, and this fork treats that failure as fatal by default) and adds
   D-pad-as-mouse-cursor movement.
+  The cursor moves at a fixed speed in pixels per second (like a real mouse), so it is no
+  longer slower on the 24 fps text entry screens.
 - **`src/input.cc`** - the full physical-button-to-game-action remapping, the Select-modifier layer,
   the on-device text entry system, key-repeat debounce for this hardware's key delivery quirks, and
   makes the Menu key's Esc action fire on key-release instead of key-press (so the OnionOS Menu+Power
