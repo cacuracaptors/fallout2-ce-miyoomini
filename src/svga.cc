@@ -552,6 +552,13 @@ void handleWindowSizeChanged()
     destroyRenderer();
     createRenderer(screenGetWidth(), screenGetHeight());
     mouseDeviceRefreshWindowMapping();
+
+    // Miyoo Mini: the new texture starts black; copy the current screen into
+    // it, or only the parts redrawn afterwards would show up.
+    if (gSdlSurface != NULL && gSdlTextureSurface != NULL) {
+        SDL_BlitSurface(gSdlSurface, NULL, gSdlTextureSurface, NULL);
+        screenMarkDirtyAll();
+    }
 }
 
 void renderFpsCounter()

@@ -26,6 +26,7 @@
 
 #include "scan_unimplemented.h"
 #include "crash_handler.h"
+#include "miyoo_shutdown.h"
 
 #if __APPLE__ && TARGET_OS_IOS
 #include "platform/ios/paths.h"
@@ -54,6 +55,9 @@ const char* getMacOsBundleResourcesPath()
 int main(int argc, char* argv[])
 {
     installCrashHandler();
+
+    // Miyoo Mini: save when the device is turned off (OnionOS only).
+    miyooShutdownInit(argv[0]);
 
     scanUnimplementdParseCommandLineArguments(argc, argv);
 

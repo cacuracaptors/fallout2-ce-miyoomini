@@ -14,6 +14,7 @@
 #include "game.h"
 #include "kb.h"
 #include "memory.h"
+#include "miyoo_shutdown.h"
 #include "mouse.h"
 #include "sfall_kb_helpers.h"
 #include "sfall_script_hooks.h"
@@ -345,6 +346,9 @@ int inputGetInput()
     int v3;
 
     _GNW95_process_message();
+
+    // Miyoo Mini: turned off outside the game loop: close without saving.
+    miyooShutdownPoll();
 
     if (!gProgramIsActive) {
         _GNW95_lost_focus();

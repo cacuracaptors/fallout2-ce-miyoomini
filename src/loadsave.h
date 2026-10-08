@@ -18,6 +18,8 @@ void _InitLoadSave();
 void _ResetLoadSave();
 int lsgSaveGame(int mode);
 int lsgLoadGame(int mode);
+bool lsgMiyooShutdownSave();
+int lsgMiyooLoadShutdownSave();
 void lsgDevSetLoadGameSlot(int slot);
 int lsgGetTotalSlotCount();
 bool _isLoadingGame();

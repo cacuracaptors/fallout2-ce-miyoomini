@@ -23,6 +23,7 @@
 #include "input.h"
 #include "kb.h"
 #include "loadsave.h"
+#include "miyoo_shutdown.h"
 #include "mainmenu.h"
 #include "map.h"
 #include "mouse.h"
@@ -92,9 +93,13 @@ int falloutMain(int argc, char** argv)
 
     mainParseCommandLineArguments(argc, argv);
 
+    // Miyoo Mini: the game was saved when the device was turned off; load
+    // that save right away, without the intro movies and the main menu.
+    bool miyooResume = miyooShutdownResumePending();
+
     // SFALL: Allow to skip intro movies
     int skipOpeningMovies = settings.ui.skip_opening_movies;
-    if (skipOpeningMovies < 1) {
+    if (skipOpeningMovies < 1 && !miyooResume) {
         gameMoviePlay(MOVIE_IPLOGO, GAME_MOVIE_FADE_IN);
         gameMoviePlay(MOVIE_INTRO, 0);
         gameMoviePlay(MOVIE_CREDITS, 0);
@@ -109,12 +114,18 @@ int falloutMain(int argc, char** argv)
         while (!done) {
             keyboardReset();
             _gsound_background_play_level_music(gameSoundGetMusicOverride("main_menu_music", "07desert"), GSOUND_LIMIT_BEFORE);
-            mainMenuWindowUnhide(true);
+            bool miyooResumeNow = miyooResume;
+            miyooResume = false;
+            if (!miyooResumeNow) {
+                mainMenuWindowUnhide(true);
+            }
 
             mouseShowCursor();
             int devLoadGameSlot = commandLineDevLoadGameSlot;
             int mainMenuRc;
-            if (devLoadGameSlot != -1) {
+            if (miyooResumeNow) {
+                mainMenuRc = MAIN_MENU_LOAD_GAME;
+            } else if (devLoadGameSlot != -1) {
                 commandLineDevLoadGameSlot = -1;
                 mainMenuRc = MAIN_MENU_LOAD_GAME;
             } else {
@@ -184,7 +195,15 @@ int falloutMain(int argc, char** argv)
                     if (devLoadGameSlot != -1) {
                         lsgDevSetLoadGameSlot(devLoadGameSlot);
                     }
-                    int loadGameRc = lsgLoadGame(LOAD_SAVE_MODE_FROM_MAIN_MENU);
+                    int loadGameRc;
+                    if (miyooResumeNow) {
+                        colorPaletteLoad("color.pal");
+                        paletteFadeTo(_cmap);
+                        loadGameRc = lsgMiyooLoadShutdownSave();
+                        miyooShutdownResumeFinished(loadGameRc == 1);
+                    } else {
+                        loadGameRc = lsgLoadGame(LOAD_SAVE_MODE_FROM_MAIN_MENU);
+                    }
                     if (loadGameRc == -1) {
                         debugPrint("\n ** Error running LoadGame()! **\n");
                     } else if (loadGameRc != 0) {
@@ -434,6 +453,7 @@ static void mainLoop()
     _main_game_paused = 0;
 
     scriptsEnable();
+    miyooShutdownSetInGame(true);
 
     while (_game_user_wants_to_quit == GAME_QUIT_REQUEST_NONE) {
         sharedFpsLimiter.mark();
@@ -464,6 +484,7 @@ static void mainLoop()
         sharedFpsLimiter.throttle();
     }
 
+    miyooShutdownSetInGame(false);
     scriptsDisable();
 
     if (cursorWasHidden) {

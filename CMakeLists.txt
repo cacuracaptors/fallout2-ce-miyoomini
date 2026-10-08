@@ -277,6 +277,8 @@ set(FALLOUT_PLATFORM_SOURCES
     "src/audio_engine.h"
     "src/crash_handler.cc"
     "src/crash_handler.h"
+    "src/miyoo_shutdown.cc"
+    "src/miyoo_shutdown.h"
     "src/delay.cc"
     "src/delay.h"
     "src/fps_limiter.cc"
