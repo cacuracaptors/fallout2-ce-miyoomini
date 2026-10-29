@@ -337,3 +337,7 @@ The final ARM (armhf) binary `fallout2-ce` will be in `build/`.
 ## License
 
 The source code in this repository is available under the [Sustainable Use License](https://github.com/cacuracaptors/fallout2-ce-miyoomini/blob/main/LICENSE.md).
+
+## AI-Assisted
+
+Claude Opus 5.5 was used to write parts of the code and to speed up debugging and optimization.
