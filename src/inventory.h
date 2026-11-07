@@ -27,17 +27,18 @@ enum Hand : int {
 typedef void InventoryPrintItemDescriptionHandler(const char* string);
 
 void inventoryResetDude();
-void inventorySetDude(Object* obj, int pid);
+void inventorySetDude(Object* obj, const ProtoId& protoId);
 void inventoryOpen();
 int inventoryGetInvenApCost();
 void inventorySetInvenApCost(int cost);
 void inventoryResetInvenApCost();
 void adjustCritterStatsOnArmorChange(Object* critter, Object* oldArmor, Object* newArmor);
-FrmId inventoryComputeCritterFrmId(Object* critter, int basePid, Object* rightHandItem, Object* leftHandItem, Object* armor, Hand activeHand, AnimationType anim, Rotation rotation);
+FrmId inventoryComputeCritterFrmId(Object* critter, const ProtoId& baseProtoId, Object* rightHandItem, Object* leftHandItem, Object* armor, Hand activeHand, AnimationType anim, Rotation rotation);
 void inventoryOpenUseItemOn(Object* targetObj);
 Object* critterGetItem2(Object* critter);
 Object* critterGetItem1(Object* critter);
 Object* critterGetArmor(Object* critter);
+void critterRestoreLightWithoutFlare(Object* critter);
 
 struct CritterEquipped {
     Object* leftHand = nullptr;
@@ -47,8 +48,8 @@ struct CritterEquipped {
 };
 CritterEquipped critterStripEquipped(Object* critter);
 void critterRestoreEquipped(Object* critter, CritterEquipped& equipped);
-Object* objectGetCarriedObjectByPid(Object* obj, int pid);
-int objectGetCarriedQuantityByPid(Object* obj, int pid);
+Object* objectGetCarriedObjectByProtoId(Object* obj, const ProtoId& protoId);
+int objectGetCarriedQuantityByProtoId(Object* obj, const ProtoId& protoId);
 Object* inventoryFindByType(Object* obj, ItemType itemType, int* indexPtr);
 Object* inventoryFindById(Object* obj, int id);
 Object* inventoryItemByIndex(Object* obj, int index);

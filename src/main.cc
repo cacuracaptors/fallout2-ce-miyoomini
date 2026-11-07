@@ -59,6 +59,7 @@ static void mainHandleDevEndgameRequests();
 static void mainRequestDevEndgameIfNeeded();
 static void mainRunDevEndgameMovieIfNeeded();
 static void mainLoop();
+static void mainRunGameLoopAndCleanup();
 static void showDeath();
 static void _main_death_voiceover_callback();
 static int _mainDeathGrabTextFile(const char* fileName, char* dest);
@@ -104,9 +105,9 @@ int falloutMain(int argc, char** argv)
     // SFALL: Allow to skip intro movies
     int skipOpeningMovies = settings.ui.skip_opening_movies;
     if (skipOpeningMovies < 1 && !miyooResume) {
-        gameMoviePlay(MOVIE_IPLOGO, GAME_MOVIE_FADE_IN);
-        gameMoviePlay(MOVIE_INTRO, 0);
-        gameMoviePlay(MOVIE_CREDITS, 0);
+        gameMoviePlay(MOVIE_IPLOGO, GameMovieFlags::FadeIn);
+        gameMoviePlay(MOVIE_INTRO, GameMovieFlags::None);
+        gameMoviePlay(MOVIE_CREDITS, GameMovieFlags::None);
     } else {
         // If the splash is shown but opening movies are skipped, fade it out
         // before the main menu starts its normal fade-in.
@@ -124,7 +125,11 @@ int falloutMain(int argc, char** argv)
         bool done = false;
         while (!done) {
             keyboardReset();
-            _gsound_background_play_level_music(gameSoundGetMusicOverride("main_menu_music", "07desert"), GSOUND_LIMIT_BEFORE);
+            if (!backgoundSoundIsPlaying()) {
+                _gsound_background_play_level_music(gameSoundGetMusicOverride("main_menu_music", "07desert"), GameSoundReadLimitMode::LimitBefore);
+            }
+
+            // Miyoo Mini: when resuming the power-off save the menu stays hidden.
             bool miyooResumeNow = miyooResume;
             miyooResume = false;
             if (!miyooResumeNow) {
@@ -133,12 +138,12 @@ int falloutMain(int argc, char** argv)
 
             mouseShowCursor();
             int devLoadGameSlot = commandLineDevLoadGameSlot;
-            int mainMenuRc;
+            MainMenuOption mainMenuRc;
             if (miyooResumeNow) {
-                mainMenuRc = MAIN_MENU_LOAD_GAME;
+                mainMenuRc = MainMenuOption::LoadGame;
             } else if (devLoadGameSlot != -1) {
                 commandLineDevLoadGameSlot = -1;
-                mainMenuRc = MAIN_MENU_LOAD_GAME;
+                mainMenuRc = MainMenuOption::LoadGame;
             } else {
                 miyooBoostReset();
                 mainMenuRc = mainMenuWindowHandleEvents();
@@ -146,16 +151,17 @@ int falloutMain(int argc, char** argv)
             mouseHideCursor();
 
             switch (mainMenuRc) {
-            case MAIN_MENU_INTRO:
+            case MainMenuOption::Intro:
                 mainMenuWindowHide(true);
-                gameMoviePlay(MOVIE_INTRO, GAME_MOVIE_STOP_MUSIC);
-                gameMoviePlay(MOVIE_CREDITS, 0);
+                gameMoviePlay(MOVIE_INTRO, GameMovieFlags::StopMusic);
+                gameMoviePlay(MOVIE_CREDITS, GameMovieFlags::None);
                 break;
-            case MAIN_MENU_NEW_GAME:
-                mainMenuWindowHide(true);
-                mainMenuWindowFree();
+            case MainMenuOption::NewGame: {
+                mainMenuBeginSubscreen();
                 if (characterSelectorOpen() == 2) {
-                    gameMoviePlay(MOVIE_ELDER, GAME_MOVIE_STOP_MUSIC);
+                    mainMenuFinishSubscreen();
+
+                    gameMoviePlay(MOVIE_ELDER, GameMovieFlags::StopMusic);
                     randomSeedPrerandom(-1);
 
                     // SFALL: Call "before start" event
@@ -176,102 +182,81 @@ int falloutMain(int argc, char** argv)
                     sfallOnAfterGameStarted();
                     gGameLoaded = true;
 
-                    mainHandleDevEndgameRequests();
-                    mainLoop();
-                    paletteFadeTo(gPaletteWhite);
-
-                    // NOTE: Uninline.
-                    main_unload_new();
-
-                    // NOTE: Uninline.
-                    main_reset_system();
-
-                    if (_main_show_death_scene != 0) {
-                        showDeath();
-                        _main_show_death_scene = 0;
-                    }
-                }
-
-                mainMenuWindowInit();
-
-                break;
-            case MAIN_MENU_LOAD_GAME:
-                if (1) {
-                    int win = windowCreate(0, 0, screenGetWidth(), screenGetHeight(), COLOR_BLACK, WINDOW_MODAL | WINDOW_MOVE_ON_TOP);
-                    mainMenuWindowHide(true);
-                    mainMenuWindowFree();
-
-                    // NOTE: Uninline.
-                    main_loadgame_new();
-
-                    if (devLoadGameSlot != -1) {
-                        lsgDevSetLoadGameSlot(devLoadGameSlot);
-                    }
-                    int loadGameRc;
-                    if (miyooResumeNow) {
-                        colorPaletteLoad("color.pal");
-                        paletteFadeTo(_cmap);
-                        loadGameRc = lsgMiyooLoadShutdownSave();
-                        miyooShutdownResumeFinished(loadGameRc == 1);
-                    } else {
-                        loadGameRc = lsgLoadGame(LOAD_SAVE_MODE_FROM_MAIN_MENU);
-                    }
-                    if (loadGameRc == -1) {
-                        debugPrint("\n ** Error running LoadGame()! **\n");
-                    } else if (loadGameRc != 0) {
-                        windowDestroy(win);
-                        win = -1;
-                        mainHandleDevEndgameRequests();
-                        mainLoop();
-                        paletteFadeTo(gPaletteWhite);
-                    }
-                    if (win != -1) {
-                        windowDestroy(win);
-                    }
-
-                    // NOTE: Uninline.
-                    main_unload_new();
-
-                    // NOTE: Uninline.
-                    main_reset_system();
-
-                    if (_main_show_death_scene != 0) {
-                        showDeath();
-                        _main_show_death_scene = 0;
-                    }
+                    mainRunGameLoopAndCleanup();
                     mainMenuWindowInit();
+                } else {
+                    mainMenuCancelSubscreen();
                 }
                 break;
-            case MAIN_MENU_TIMEOUT:
+            }
+            case MainMenuOption::LoadGame: {
+                mainMenuBeginSubscreen();
+
+                // NOTE: Uninline.
+                main_loadgame_new();
+
+                if (devLoadGameSlot != -1) {
+                    lsgDevSetLoadGameSlot(devLoadGameSlot);
+                }
+                int loadGameRc;
+                if (miyooResumeNow) {
+                    // Miyoo Mini: load the power-off save without the load screen.
+                    colorPaletteLoad("color.pal");
+                    paletteFadeTo(_cmap);
+                    loadGameRc = lsgMiyooLoadShutdownSave();
+                    miyooShutdownResumeFinished(loadGameRc == 1);
+                } else {
+                    loadGameRc = lsgLoadGame(LoadSaveMode::FromMainMenu);
+                }
+                if (loadGameRc == -1) {
+                    debugPrint("\n ** Error running LoadGame()! **\n");
+                }
+
+                if (loadGameRc > 0) {
+                    mainMenuFinishSubscreen();
+                    mainRunGameLoopAndCleanup();
+                    mainMenuWindowInit();
+                } else {
+                    main_unload_new();
+                    mainMenuCancelSubscreen();
+                    if (loadGameRc < 0) {
+                        main_reset_system();
+                    }
+                }
+                break;
+            }
+            case MainMenuOption::Timeout:
                 debugPrint("Main menu timed-out\n");
                 // FALLTHROUGH
-            case MAIN_MENU_SCREENSAVER:
+            case MainMenuOption::ScreenSaver:
                 mainMenuWindowHide(true);
-                gameMoviePlay(MOVIE_INTRO, GAME_MOVIE_PAUSE_MUSIC);
+                gameMoviePlay(MOVIE_INTRO, GameMovieFlags::PauseMusic);
                 break;
-            case MAIN_MENU_OPTIONS:
-                mainMenuWindowHide(true);
+            case MainMenuOption::Options: {
+                mainMenuBeginSubscreen();
                 doPreferences(true);
+                mainMenuCancelSubscreen();
                 break;
-            case MAIN_MENU_CREDITS:
+            }
+            case MainMenuOption::Credits:
                 mainMenuWindowHide(true);
                 creditsOpen("credits.txt", InterfaceFrameId::Invalid, false);
                 break;
-            case MAIN_MENU_QUOTES:
+            case MainMenuOption::Quotes:
                 // NOTE: There is a strange cmp at 0x480C50. Both operands are
                 // zero, set before the loop and do not modify afterwards. For
                 // clarity this condition is omitted.
                 mainMenuWindowHide(true);
                 creditsOpen("quotes.txt", InterfaceFrameId::Invalid, true);
                 break;
-            case MAIN_MENU_EXIT:
-            case -1:
+            case MainMenuOption::Exit:
+            case MainMenuOption::Invalid:
                 done = true;
                 mainMenuWindowHide(true);
                 mainMenuWindowFree();
                 backgroundSoundDelete();
                 break;
-            case MAIN_MENU_SELFRUN:
+            case MainMenuOption::SelfRun:
                 break;
             }
         }
@@ -506,6 +491,24 @@ static void mainLoop()
     }
 }
 
+static void mainRunGameLoopAndCleanup()
+{
+    mainHandleDevEndgameRequests();
+    mainLoop();
+    paletteFadeTo(gPaletteWhite);
+
+    // NOTE: Uninline.
+    main_unload_new();
+
+    // NOTE: Uninline.
+    main_reset_system();
+
+    if (_main_show_death_scene != 0) {
+        showDeath();
+        _main_show_death_scene = 0;
+    }
+}
+
 // 0x48118C
 static void showDeath()
 {
@@ -540,7 +543,7 @@ static void showDeath()
                 break;
             }
 
-            while (mouseGetEvent() != 0) {
+            while (mouseGetEvent() != MouseButtonEvent::None) {
                 sharedFpsLimiter.mark();
 
                 inputGetInput();
@@ -592,7 +595,7 @@ static void showDeath()
             speechSetEndCallback(_main_death_voiceover_callback);
 
             unsigned int delay;
-            if (speechLoad(deathFileName, GSOUND_LOAD_NO_PLAY, GSOUND_STREAM, GSOUND_NO_LOOP) == -1) {
+            if (speechLoad(deathFileName, GameSoundReadLimitMode::LoadNoPlay, GameSoundStorageType::Stream, GameSoundLoopingMode::NoLoop) == -1) {
                 delay = 3000;
             } else {
                 delay = UINT_MAX;
@@ -619,7 +622,7 @@ static void showDeath()
 
             speechDelete();
 
-            while (mouseGetEvent() != 0) {
+            while (mouseGetEvent() != MouseButtonEvent::None) {
                 sharedFpsLimiter.mark();
 
                 inputGetInput();

@@ -44,7 +44,7 @@ static int artReadList(const char* path, char** out_arr, int* out_count);
 static int artCacheGetFileSize(const FrmId& frmId, int* out_size);
 static int artCacheReadData(const FrmId& frmId, int* sizePtr, unsigned char* data);
 static void artCacheFreeImpl(void* ptr);
-static int artReadFrameData(unsigned char* data, File* stream, int count, int* paddingPtr);
+static int artReadFrameData(unsigned char* data, size_t dataCapacity, File* stream, int count, int sourceSize, int* paddingPtr);
 static int artReadHeader(Art* art, File* stream);
 static int artGetDataSize(const Art* art);
 static int paddingForSize(int size);
@@ -396,13 +396,13 @@ void artToggleObjectTypeHidden(ObjectType objectType)
 // 0x418F7C
 int artGetFidgetCount(const HeadFrmId& frmId)
 {
-    if (!frmId.valid()) {
+    if (!frmId.valid() || !frmId.hasFid()) {
         return -1;
     }
 
-    int head = frmId.frameId().id;
+    int head = frmId.frameId();
 
-    if (head > gArtListDescriptions[OBJ_TYPE_HEAD].fileNamesLength) {
+    if (head >= gArtListDescriptions[OBJ_TYPE_HEAD].fileNamesLength) {
         return 0;
     }
 
@@ -410,13 +410,13 @@ int artGetFidgetCount(const HeadFrmId& frmId)
 
     HeadFidget fidget = frmId.fidget();
     switch (fidget) {
-    case FIDGET_INVALID:
+    case HeadFidget::Invalid:
         return -1;
-    case FIDGET_GOOD:
+    case HeadFidget::Good:
         return headDescription->goodFidgetCount;
-    case FIDGET_NEUTRAL:
+    case HeadFidget::Neutral:
         return headDescription->neutralFidgetCount;
-    case FIDGET_BAD:
+    case HeadFidget::Bad:
         return headDescription->badFidgetCount;
     default:
         return 0;
@@ -568,11 +568,11 @@ int artCopyFileName(const FrmId& frmId, char* dest)
 
     ptr = &(gArtListDescriptions[frmId.objectType()]);
 
-    if (!frmId.hasFid() || frmId.frameId().id >= ptr->fileNamesLength) {
+    if (!frmId.hasFid() || frmId.frameId() >= ptr->fileNamesLength) {
         return -1;
     }
 
-    strcpy(dest, ptr->fileNames + frmId.frameId().id * ART_NAME_SIZE);
+    strcpy(dest, ptr->fileNames + frmId.frameId() * ART_NAME_SIZE);
 
     return 0;
 }
@@ -586,7 +586,7 @@ int _art_get_code(AnimationType animation, WeaponAnimation weaponType, char* wea
 
     if (animation >= ANIM_TAKE_OUT && animation <= ANIM_FIRE_CONTINUOUS) {
         *animationCodePtr = 'c' + (animation - ANIM_TAKE_OUT);
-        if (weaponType == WEAPON_ANIMATION_NONE) {
+        if (weaponType == WeaponAnimation::None) {
             return -1;
         }
 
@@ -613,11 +613,11 @@ int _art_get_code(AnimationType animation, WeaponAnimation weaponType, char* wea
         *weaponCodePtr = 'b';
         return 0;
     } else if (animation == ANIM_THROW_ANIM) {
-        if (weaponType == WEAPON_ANIMATION_KNIFE) {
+        if (weaponType == WeaponAnimation::Knife) {
             // knife
             *weaponCodePtr = 'd';
             *animationCodePtr = 'm';
-        } else if (weaponType == WEAPON_ANIMATION_SPEAR) {
+        } else if (weaponType == WeaponAnimation::Spear) {
             // spear
             *weaponCodePtr = 'g';
             *animationCodePtr = 'm';
@@ -628,7 +628,7 @@ int _art_get_code(AnimationType animation, WeaponAnimation weaponType, char* wea
         }
         return 0;
     } else if (animation == ANIM_DODGE_ANIM) {
-        if (weaponType <= 0) {
+        if (weaponType == WeaponAnimation::None) {
             *weaponCodePtr = 'a';
             *animationCodePtr = 'n';
         } else {
@@ -639,7 +639,7 @@ int _art_get_code(AnimationType animation, WeaponAnimation weaponType, char* wea
     }
 
     *animationCodePtr = 'a' + animation;
-    if (animation <= ANIM_WALK && weaponType > 0) {
+    if (animation <= ANIM_WALK && weaponType != WeaponAnimation::None) {
         *weaponCodePtr = artGetCritterWeaponCode(weaponType);
         return 0;
     }
@@ -651,18 +651,18 @@ int _art_get_code(AnimationType animation, WeaponAnimation weaponType, char* wea
 static char artGetCritterWeaponCode(WeaponAnimation weaponType)
 {
     switch (weaponType) {
-    case WEAPON_ANIMATION_SFALL_S:
+    case WeaponAnimation::SfallS:
         return 's';
-    case WEAPON_ANIMATION_SFALL_O:
+    case WeaponAnimation::SfallO:
         return 'o';
-    case WEAPON_ANIMATION_SFALL_P:
+    case WeaponAnimation::SfallP:
         return 'p';
-    case WEAPON_ANIMATION_SFALL_Q:
+    case WeaponAnimation::SfallQ:
         return 'q';
-    case WEAPON_ANIMATION_SFALL_T:
+    case WeaponAnimation::SfallT:
         return 't';
     default:
-        return 'd' + (weaponType - 1);
+        return 'd' + (static_cast<int>(weaponType) - 1);
     }
 }
 
@@ -935,7 +935,7 @@ CritterFrameId _art_alias_num(CritterFrameId index)
 int artCritterFrmIdShouldRun(const FrmId& frmId)
 {
     if (frmId.objectType() == OBJ_TYPE_CRITTER && frmId.valid() && frmId.hasFid()) {
-        return gArtCritterFidShoudRunData[frmId.frameId().id];
+        return gArtCritterFidShoudRunData[frmId.frameId()];
     }
 
     return 0;
@@ -965,9 +965,13 @@ static int artCacheGetFileSize(const FrmId& frmId, int* sizePtr)
     const char* artFilePath = frmId.filePath();
     if (artFilePath != nullptr) {
         File* stream = nullptr;
+        const char* openedPath = artFilePath;
         const char* localizedPath;
         if (artGetLocalizedPath(artFilePath, &localizedPath)) {
             stream = fileOpen(localizedPath, "rb");
+            if (stream != nullptr) {
+                openedPath = localizedPath;
+            }
         }
         if (stream == nullptr) {
             stream = fileOpen(artFilePath, "rb");
@@ -983,6 +987,8 @@ static int artCacheGetFileSize(const FrmId& frmId, int* sizePtr)
                 } else {
                     result = 0;
                 }
+            } else {
+                debugPrint("ART ERROR: rejected %s: invalid header\n", openedPath);
             }
             fileClose(stream);
         }
@@ -1001,13 +1007,13 @@ static int artCacheReadData(const FrmId& frmId, int* sizePtr, unsigned char* dat
         bool loaded = false;
         const char* localizedPath;
         if (artGetLocalizedPath(artFileName, &localizedPath)) {
-            if (artRead(localizedPath, data) == 0) {
+            if (artRead(localizedPath, data, *sizePtr) == 0) {
                 loaded = true;
             }
         }
 
         if (!loaded) {
-            if (artRead(artFileName, data) == 0) {
+            if (artRead(artFileName, data, *sizePtr) == 0) {
                 loaded = true;
             }
         }
@@ -1033,23 +1039,43 @@ static void artCacheFreeImpl(void* ptr)
 }
 
 // 0x419D60
-static int artReadFrameData(unsigned char* data, File* stream, int count, int* paddingPtr)
+static int artReadFrameData(unsigned char* data, size_t dataCapacity, File* stream, int count, int sourceSize, int* paddingPtr)
 {
-    unsigned char* ptr = data;
+    size_t dataOffset = 0;
+    int sourceOffset = 0;
     int padding = 0;
     for (int index = 0; index < count; index++) {
-        ArtFrame* frame = (ArtFrame*)ptr;
+        ArtFrame frame;
 
-        if (fileReadInt16(stream, &(frame->width)) == -1) return -1;
-        if (fileReadInt16(stream, &(frame->height)) == -1) return -1;
-        if (fileReadInt32(stream, &(frame->size)) == -1) return -1;
-        if (fileReadInt16(stream, &(frame->x)) == -1) return -1;
-        if (fileReadInt16(stream, &(frame->y)) == -1) return -1;
-        if (fileRead(ptr + sizeof(ArtFrame), frame->size, 1, stream) != 1) return -1;
+        if (sourceSize - sourceOffset < static_cast<int>(sizeof(ArtFrame))) return -1;
+        if (fileReadInt16(stream, &(frame.width)) == -1) return -1;
+        if (fileReadInt16(stream, &(frame.height)) == -1) return -1;
+        if (fileReadInt32(stream, &(frame.size)) == -1) return -1;
+        if (fileReadInt16(stream, &(frame.x)) == -1) return -1;
+        if (fileReadInt16(stream, &(frame.y)) == -1) return -1;
+        sourceOffset += sizeof(ArtFrame);
 
-        ptr += sizeof(ArtFrame) + frame->size;
-        ptr += paddingForSize(frame->size);
-        padding += paddingForSize(frame->size);
+        if (frame.width < 0
+            || frame.height < 0
+            || frame.size < 0
+            || static_cast<size_t>(frame.width) * static_cast<size_t>(frame.height) != static_cast<size_t>(frame.size)
+            || frame.size > sourceSize - sourceOffset) {
+            return -1;
+        }
+
+        int framePadding = paddingForSize(frame.size);
+        size_t frameDataSize = sizeof(ArtFrame) + static_cast<size_t>(frame.size) + framePadding;
+        if (frameDataSize > dataCapacity - dataOffset) {
+            return -1;
+        }
+
+        ArtFrame* destFrame = reinterpret_cast<ArtFrame*>(data + dataOffset);
+        *destFrame = frame;
+        if (frame.size > 0 && fileRead(data + dataOffset + sizeof(ArtFrame), frame.size, 1, stream) != 1) return -1;
+
+        sourceOffset += frame.size;
+        dataOffset += frameDataSize;
+        padding += framePadding;
     }
 
     *paddingPtr = padding;
@@ -1069,22 +1095,45 @@ static int artReadHeader(Art* art, File* stream)
     if (fileReadInt32List(stream, art->dataOffsets, ROTATION_COUNT) == -1) return -1;
     if (fileReadInt32(stream, &(art->dataSize)) == -1) return -1;
 
-    // CE: Fix malformed `frm` files with `dataSize` set to 0 in Nevada.
-    if (art->dataSize == 0) {
-        art->dataSize = fileGetSize(stream);
+    long frameDataOffset = fileTell(stream);
+    int fileSize = fileGetSize(stream);
+    if (frameDataOffset < 0 || fileSize < 0 || art->frameCount < 0) {
+        return -1;
     }
 
-    if (art->frameCount < 0) {
-        debugPrint("ART WARNING: negative frameCount %d in header\n", art->frameCount);
-    }
+    int payloadSize;
+    if (fileSize != 0) {
+        if (fileSize < frameDataOffset) {
+            return -1;
+        }
 
-    if (art->dataSize < 0) {
-        debugPrint("ART WARNING: negative dataSize %d in header\n", art->dataSize);
+        payloadSize = fileSize - static_cast<int>(frameDataOffset);
+        if (art->dataSize < 0) {
+            return -1;
+        }
+
+        // The file payload is authoritative. Split directional art (.FR0-.FR5)
+        // repeats the aggregate size of all six files in every header, while
+        // some FRMs from Resurrection report the size of only the first
+        // rotation. Frame reads below validate the actual payload in either
+        // case.
+        art->dataSize = payloadSize;
+    } else {
+        // The decompressed size is unavailable for gzip streams. Keep the header
+        // size as the boundary; frame reads below still validate every source and
+        // destination range and fail if the stream is truncated.
+        if (art->dataSize <= 0) {
+            return -1;
+        }
+
+        payloadSize = art->dataSize;
     }
 
     for (int rotation = 0; rotation < ROTATION_COUNT; rotation++) {
-        if (art->dataOffsets[rotation] < 0) {
-            debugPrint("ART WARNING: negative dataOffset[%d] %d in header\n", rotation, art->dataOffsets[rotation]);
+        if (art->dataOffsets[rotation] < 0
+            || art->dataOffsets[rotation] > payloadSize
+            || (rotation > 0 && art->dataOffsets[rotation] < art->dataOffsets[rotation - 1])) {
+            return -1;
         }
     }
 
@@ -1307,18 +1356,25 @@ static Art* artLoadFrm(const char* path)
 
     Art header;
     if (artReadHeader(&header, stream) != 0) {
+        debugPrint("ART ERROR: rejected %s: invalid header\n", path);
         fileClose(stream);
         return nullptr;
     }
 
     fileClose(stream);
 
-    unsigned char* data = reinterpret_cast<unsigned char*>(internal_malloc(artGetDataSize(&header)));
+    int dataSize = artGetDataSize(&header);
+    if (dataSize <= 0) {
+        debugPrint("ART ERROR: rejected %s: invalid data size %d\n", path, dataSize);
+        return nullptr;
+    }
+
+    unsigned char* data = reinterpret_cast<unsigned char*>(internal_malloc(dataSize));
     if (data == nullptr) {
         return nullptr;
     }
 
-    if (artRead(path, data) != 0) {
+    if (artRead(path, data, dataSize) != 0) {
         internal_free(data);
         return nullptr;
     }
@@ -1365,8 +1421,12 @@ static Art* artLoadLocalized(const char* path)
 }
 
 // 0x419FC0
-int artRead(const char* path, unsigned char* data)
+int artRead(const char* path, unsigned char* data, size_t size)
 {
+    if (path == nullptr || data == nullptr || size < sizeof(Art)) {
+        return -1;
+    }
+
     File* stream = fileOpen(path, "rb");
     if (stream == nullptr) {
         return -2;
@@ -1374,13 +1434,21 @@ int artRead(const char* path, unsigned char* data)
 
     Art* art = (Art*)data;
     if (artReadHeader(art, stream) != 0) {
+        debugPrint("ART ERROR: rejected %s: invalid header\n", path);
         fileClose(stream);
         return -3;
     }
 
     int totalAllocSize = artGetDataSize(art);
-    if (totalAllocSize <= 0) {
+    if (totalAllocSize <= 0 || static_cast<size_t>(totalAllocSize) > size) {
         debugPrint("ART ERROR: artRead computed invalid totalAllocSize %d for %s\n", totalAllocSize, path);
+        fileClose(stream);
+        return -5;
+    }
+
+    long frameDataOffset = fileTell(stream);
+    if (frameDataOffset < 0) {
+        debugPrint("ART ERROR: rejected %s: invalid frame data offset\n", path);
         fileClose(stream);
         return -5;
     }
@@ -1394,7 +1462,26 @@ int artRead(const char* path, unsigned char* data)
         if (index == 0 || art->dataOffsets[index - 1] != art->dataOffsets[index]) {
             art->padding[index] += previousPadding;
             currentPadding += previousPadding;
-            if (artReadFrameData(data + sizeof(Art) + art->dataOffsets[index] + art->padding[index], stream, art->frameCount, &previousPadding) != 0) {
+
+            int nextDataOffset = art->dataSize;
+            for (int nextIndex = index + 1; nextIndex < ROTATION_COUNT; nextIndex++) {
+                if (art->dataOffsets[nextIndex] != art->dataOffsets[index]) {
+                    nextDataOffset = art->dataOffsets[nextIndex];
+                    break;
+                }
+            }
+
+            size_t destOffset = sizeof(Art) + art->dataOffsets[index] + art->padding[index];
+            if (destOffset > static_cast<size_t>(totalAllocSize)
+                || fileSeek(stream, frameDataOffset + art->dataOffsets[index], SEEK_SET) == -1
+                || artReadFrameData(data + destOffset,
+                       totalAllocSize - destOffset,
+                       stream,
+                       art->frameCount,
+                       nextDataOffset - art->dataOffsets[index],
+                       &previousPadding)
+                    != 0) {
+                debugPrint("ART ERROR: rejected %s: invalid frame data for rotation %d\n", path, index);
                 fileClose(stream);
                 return -5;
             }
@@ -1480,17 +1567,21 @@ int artWrite(const char* path, unsigned char* data)
 
 static int artGetDataSize(const Art* art)
 {
-    int dataSize = sizeof(*art) + art->dataSize;
+    if (art->dataSize < 0 || art->frameCount < 0) {
+        return -1;
+    }
+
+    size_t dataSize = sizeof(*art) + static_cast<size_t>(art->dataSize);
 
     for (int index = 0; index < ROTATION_COUNT; index++) {
         if (index == 0 || art->dataOffsets[index - 1] != art->dataOffsets[index]) {
             // Assume worst case - every frame is unaligned and need
             // max padding.
-            dataSize += (sizeof(int) - 1) * art->frameCount;
+            dataSize += static_cast<size_t>(sizeof(int) - 1) * art->frameCount;
         }
     }
 
-    return dataSize;
+    return dataSize <= INT_MAX ? static_cast<int>(dataSize) : -1;
 }
 
 static int paddingForSize(int size)
@@ -1569,27 +1660,66 @@ std::shared_ptr<NamedCacheEntry> artLockNamedFrameData(const char* path)
 }
 
 FrmId::FrmId(CritterFrameId critter, AnimationType animType, WeaponAnimation weaponAnimation, Rotation rotation)
-    : _objectType(OBJ_TYPE_CRITTER)
-    , _fid(buildObjectFid(OBJ_TYPE_CRITTER, static_cast<int>(critter), animType, weaponAnimation, rotation))
-    , _frameId { buildFrameId(static_cast<int>(critter)) }
-    , _path(nullptr)
+    : FrmId(
+          OBJ_TYPE_CRITTER,
+          buildObjectFid(OBJ_TYPE_CRITTER, static_cast<int>(critter), animType, weaponAnimation, rotation),
+          static_cast<int>(critter),
+          nullptr)
 {
 }
 
 FrmId::FrmId(ObjectType objectType, int frmId, AnimationType animType, WeaponAnimation weaponAnimation, Rotation rotation)
-    : _objectType(objectType)
-    , _fid(buildObjectFid(objectType, frmId, animType, weaponAnimation, rotation))
-    , _frameId { buildFrameId(frmId) }
-    , _path(nullptr)
+    : FrmId(
+          objectType,
+          buildObjectFid(objectType, frmId, animType, weaponAnimation, rotation),
+          frmId,
+          nullptr)
 {
     assert(objectTypeIsValid(objectType));
 }
 
 FrmId::FrmId(Object* object, AnimationType animType, WeaponAnimation weaponAnimation, Rotation rotation)
-    : _objectType(object == nullptr ? OBJ_TYPE_INVALID : objectTypeFromFid(object->fid))
-    , _fid(object == nullptr ? kEmptyFid : buildObjectFid(objectTypeFromFid(object->fid), frameIdFromFid(object->fid), animType, weaponAnimation, rotation))
-    , _frameId { object == nullptr ? kInvalidFrameId : buildFrameId(object->fid) }
-    , _path(nullptr)
+    : FrmId(
+          object == nullptr ? OBJ_TYPE_INVALID : objectTypeFromFid(object->fid),
+          object == nullptr ? kEmptyFid : buildObjectFid(objectTypeFromFid(object->fid), frameIdFromFid(object->fid), animType, weaponAnimation, rotation),
+          object == nullptr ? kInvalidFrameId : object->fid,
+          nullptr)
+{
+}
+
+FrmId::FrmId(Object* object, WeaponAnimation weaponAnimation, Rotation rotation)
+    : FrmId(
+          object == nullptr ? OBJ_TYPE_INVALID : objectTypeFromFid(object->fid),
+          object == nullptr ? kEmptyFid : buildObjectFid(objectTypeFromFid(object->fid), frameIdFromFid(object->fid), animationTypeFromFid(object->fid), weaponAnimation, rotation),
+          object == nullptr ? kInvalidFrameId : object->fid,
+          nullptr)
+{
+}
+
+FrmId::FrmId(Object* object, AnimationType animType, WeaponAnimation weaponAnimation)
+    : FrmId(
+          object == nullptr ? OBJ_TYPE_INVALID : objectTypeFromFid(object->fid),
+          object == nullptr ? kEmptyFid : buildObjectFid(objectTypeFromFid(object->fid), frameIdFromFid(object->fid), animType, weaponAnimation, rotationFromFid(object->fid)),
+          object == nullptr ? kInvalidFrameId : object->fid,
+          nullptr)
+{
+}
+
+FrmId::FrmId(Object* object, AnimationType animType, Rotation rotation)
+    : FrmId(
+          object == nullptr ? OBJ_TYPE_INVALID : objectTypeFromFid(object->fid),
+          object == nullptr ? kEmptyFid : buildObjectFid(objectTypeFromFid(object->fid), frameIdFromFid(object->fid), animType, weaponAnimationFromFid(object->fid), rotation),
+          object == nullptr ? kInvalidFrameId : object->fid,
+          nullptr)
+{
+}
+
+FrmId::FrmId(Object* object, AnimationType animType)
+    : FrmId(
+          object == nullptr ? OBJ_TYPE_INVALID : objectTypeFromFid(object->fid),
+          object == nullptr ? kEmptyFid : buildObjectFid(objectTypeFromFid(object->fid), frameIdFromFid(object->fid), animType, weaponAnimationFromFid(object->fid), rotationFromFid(object->fid)),
+          object == nullptr ? kInvalidFrameId : object->fid,
+          nullptr)
 {
 }
 
@@ -1605,14 +1735,14 @@ int FrmId::buildObjectFid(ObjectType objectType, int frmId, AnimationType animTy
         || animType < ANIM_FALL_BACK
         || animType > ANIM_FALL_FRONT_BLOOD) {
         rotation = ROTATION_NE;
-    } else if (!exist(buildFid(OBJ_TYPE_CRITTER, frmId, animType, weaponAnimation, rotation))) {
+    } else if (!exist(buildFid(OBJ_TYPE_CRITTER, frmId, animType, static_cast<unsigned char>(weaponAnimation), rotation))) {
         rotation = rotation != ROTATION_E
-                && exist(buildFid(OBJ_TYPE_CRITTER, frmId, animType, weaponAnimation, ROTATION_E))
+                && exist(buildFid(OBJ_TYPE_CRITTER, frmId, animType, static_cast<unsigned char>(weaponAnimation), ROTATION_E))
             ? ROTATION_E
             : ROTATION_NE;
     }
 
-    return buildFid(objectType, frmId, animType, weaponAnimation, rotation);
+    return buildFid(objectType, frmId, animType, static_cast<unsigned char>(weaponAnimation), rotation);
 }
 
 // 0x4198C8
@@ -1661,7 +1791,7 @@ int FrmId::buildAliasFid(int fid)
             OBJ_TYPE_CRITTER,
             static_cast<int>(aliasedFrameId),
             anim,
-            weaponAnimationFromFid(fid),
+            static_cast<unsigned char>(weaponAnimationFromFid(fid)),
             rotationFromFid(fid));
     }
 

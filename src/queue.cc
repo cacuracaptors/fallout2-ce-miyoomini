@@ -5,6 +5,7 @@
 #include "display_monitor.h"
 #include "game.h"
 #include "game_sound.h"
+#include "inventory.h"
 #include "item.h"
 #include "map.h"
 #include "memory.h"
@@ -122,6 +123,12 @@ int queueLoad(File* stream)
         }
 
         if (fileReadInt32Enum<EventType>(stream, &(queueListNode->type)) == -1) {
+            internal_free(queueListNode);
+            rc = -1;
+            break;
+        }
+
+        if (queueListNode->type < EVENT_TYPE_FIRST || queueListNode->type >= EVENT_TYPE_COUNT) {
             internal_free(queueListNode);
             rc = -1;
             break;
@@ -451,7 +458,16 @@ unsigned int queueGetNextEventTime()
 // 0x4A281C queue_destroy
 static int flareEventProcess(Object* obj, void* data)
 {
+    Object* holder = objectGetOwner(obj);
+    bool wasHeld = (obj->flags & OBJECT_IN_ANY_HAND) != OBJECT_NONE;
+
     objectDestroy(obj);
+
+    // CE: Restore the holder's light once the burnt-out flare has left their hand.
+    if (wasHeld && holder != nullptr) {
+        critterRestoreLightWithoutFlare(holder);
+    }
+
     return 1;
 }
 
@@ -471,7 +487,7 @@ static int explosionExit(Object* obj, void* data)
 static int explosionProcess(Object* explosive, bool animate)
 {
     int tile;
-    int elevation;
+    MapElevation elevation;
 
     Object* owner = objectGetOwner(explosive);
     if (owner) {
@@ -486,7 +502,7 @@ static int explosionProcess(Object* explosive, bool animate)
     int minDamage;
 
     // SFALL
-    explosiveGetDamage(explosive->pid, &minDamage, &maxDamage);
+    explosiveGetDamage(explosive, &minDamage, &maxDamage);
 
     // FIXME: I guess this is a little bit wrong, dude can never be null, I
     // guess it needs to check if owner is dude.
@@ -518,6 +534,14 @@ static int explosionFailureEventProcess(Object* obj, void* data)
     }
 
     return explosionProcess(obj, true);
+}
+
+// SFALL: Resolve pending explosives without animation before exit scripts can
+// advance time and process their timers.
+void queueClearMapExitExplosions()
+{
+    queueClearByEventType(EVENT_TYPE_EXPLOSION, explosionExit);
+    queueClearByEventType(EVENT_TYPE_EXPLOSION_FAILURE, explosionExit);
 }
 
 // 0x4A2920 queue_leaving_map

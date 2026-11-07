@@ -4,16 +4,21 @@
 #include <vector>
 
 #include "combat_ai_defs.h"
+#include "config.h"
 #include "db.h"
 #include "obj_types.h"
+#include "proto_types.h"
 #include "scripts.h"
 #include "skill_defs.h"
 
 namespace fallout {
 
-extern int gPartyMemberDescriptionsLength;
-extern int* gPartyMemberPids;
+constexpr int kPartyMemberLookupByName = 0;
 
+extern int gPartyMemberDescriptionsLength;
+extern std::vector<ProtoId> gPartyMemberProtoIds;
+
+int partyMemberParseConfig(Config* config, bool reindex = false);
 int partyMembersInit();
 void partyMembersReset();
 void partyMembersExit();
@@ -28,12 +33,13 @@ int partyMembersLoad(File* stream);
 void _partyMemberClear();
 int _partyMemberSyncPosition();
 int _partyMemberRestingHeal(int hours);
-Object* partyMemberFindByPid(int pid);
+Object* partyMemberFindByProtoId(const ProtoId& protoId);
 bool _isPotentialPartyMember(Object* object);
 bool objectIsPartyMember(Object* object);
-bool partyMemberPidCanEquipArmor(int pid);
+bool partyMemberProtoIdCanEquipArmor(const ProtoId& protoId);
 int _getPartyMemberCount();
 int _partyMemberPrepItemSaveAll();
+int partyMemberGetCurrentLevel(Object* object);
 Skill partyMemberGetBestSkill(Object* object);
 Object* partyMemberGetBestInSkill(Skill skill);
 int partyGetBestSkillValue(Skill skill);
@@ -50,6 +56,8 @@ bool partyMemberEngineLevelUpEnabled();
 void partyMemberSetEngineLevelUpEnabled(bool enabled);
 bool partyIsAnyoneCanBeHealedByRest();
 int partyGetMaxWoundToHealByRest();
+int partyMemberGetNpcLevel(int pid, const char* name = nullptr);
+int partyMemberIncNpcLevel(int pid, const char* name = nullptr);
 std::vector<Object*> get_all_party_members_objects(bool include_hidden);
 
 } // namespace fallout

@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <limits>
+
 #include "art.h"
 #include "character_editor.h"
 #include "combat.h"
@@ -24,6 +26,11 @@
 
 namespace fallout {
 
+enum PrototypeMessage : int {
+    PROTOTYPE_MESSAGE_NAME,
+    PROTOTYPE_MESSAGE_DESCRIPTION,
+};
+
 static int objectCritterCombatDataRead(CritterCombatData* data, File* stream);
 static int objectCritterCombatDataWrite(CritterCombatData* data, File* stream);
 static int _proto_update_gen(Object* obj);
@@ -34,11 +41,12 @@ static int protoRead(Proto* buf, File* stream);
 static int protoItemDataWrite(ItemProtoData* item_data, ItemType type, File* stream);
 static int protoSceneryDataWrite(SceneryProtoData* scenery_data, SceneryType type, File* stream);
 static int protoWrite(Proto* buf, File* stream);
-static int _proto_load_pid(int pid, Proto** out_proto);
+static int protoLoadProtoId(const ProtoId& protoId, Proto** out_proto);
 static int _proto_find_free_subnode(ObjectType type, Proto** out_ptr);
 static void _proto_remove_some_list(ObjectType type);
 static void _proto_remove_list(ObjectType type);
-static int _proto_new_id(ObjectType type);
+static ProtoId _proto_new_id(ObjectType type);
+static char* protoGetMessage(const ProtoId& protoId, PrototypeMessage message);
 
 // 0x50CF3C aProto_0
 static char _aProto_0[] = "proto\\";
@@ -88,7 +96,7 @@ static int _protos_been_initialized = 0;
 // obj_dude_proto
 // 0x51C370 pc_proto
 static CritterProto gDudeProto = {
-    0x1000000,
+    ProtoId(CritterProtoTypeId::Dude).pid(),
     -1,
     0x1000001,
     0,
@@ -186,21 +194,21 @@ static char** _perk_code_strs;
 static char** _critter_stats_list;
 
 // 0x49E270 proto_make_path
-void proto_make_path(char* path, int pid)
+void proto_make_path(char* path, const ProtoId& protoId)
 {
     strcpy(path, _cd_path_base);
     strcat(path, _proto_path_base);
-    if (pid != -1) {
-        strcat(path, artGetObjectTypeName(objectTypeFromPid(pid)));
+    if (protoId.valid()) {
+        strcat(path, artGetObjectTypeName(protoId.objectType()));
     }
 }
 
 // Append proto file name to proto_path from proto.lst.
 //
 // 0x49E758 proto_list_str
-int _proto_list_str(int pid, char* proto_path)
+int _proto_list_str(const ProtoId& protoId, char* proto_path)
 {
-    if (pid == -1) {
+    if (!protoId.valid()) {
         return -1;
     }
 
@@ -209,9 +217,9 @@ int _proto_list_str(int pid, char* proto_path)
     }
 
     char path[COMPAT_MAX_PATH];
-    proto_make_path(path, pid);
+    proto_make_path(path, protoId);
     strcat(path, "\\");
-    strcat(path, artGetObjectTypeName(objectTypeFromPid(pid)));
+    strcat(path, artGetObjectTypeName(protoId.objectType()));
     strcat(path, ".lst");
 
     File* stream = fileOpen(path, "rt");
@@ -219,7 +227,7 @@ int _proto_list_str(int pid, char* proto_path)
     int i = 1;
     char string[256];
     while (fileReadString(string, sizeof(string), stream)) {
-        if (i == frameIdFromPid(pid)) {
+        if (i == protoId.protoId()) {
             break;
         }
 
@@ -228,7 +236,7 @@ int _proto_list_str(int pid, char* proto_path)
 
     fileClose(stream);
 
-    if (i != frameIdFromPid(pid)) {
+    if (i != protoId.protoId()) {
         return -1;
     }
 
@@ -254,10 +262,10 @@ size_t proto_size(ObjectType type)
 }
 
 // 0x49E99C proto_action_can_use
-bool _proto_action_can_use(int pid)
+bool _proto_action_can_use(const ProtoId& protoId)
 {
     Proto* proto;
-    if (protoGetProto(pid, &proto) == -1) {
+    if (protoGetProto(protoId, &proto) == -1) {
         return false;
     }
 
@@ -265,7 +273,7 @@ bool _proto_action_can_use(int pid)
         return true;
     }
 
-    if (objectTypeFromPid(pid) == OBJ_TYPE_ITEM && proto->item.type == ITEM_TYPE_CONTAINER) {
+    if (protoId.objectType() == OBJ_TYPE_ITEM && proto->item.type == ITEM_TYPE_CONTAINER) {
         return true;
     }
 
@@ -273,10 +281,10 @@ bool _proto_action_can_use(int pid)
 }
 
 // 0x49E9DC proto_action_can_use_on
-bool _proto_action_can_use_on(int pid)
+bool _proto_action_can_use_on(const ProtoId& protoId)
 {
     Proto* proto;
-    if (protoGetProto(pid, &proto) == -1) {
+    if (protoGetProto(protoId, &proto) == -1) {
         return false;
     }
 
@@ -284,7 +292,7 @@ bool _proto_action_can_use_on(int pid)
         return true;
     }
 
-    if (objectTypeFromPid(pid) == OBJ_TYPE_ITEM && proto->item.type == ITEM_TYPE_DRUG) {
+    if (protoId.objectType() == OBJ_TYPE_ITEM && proto->item.type == ITEM_TYPE_DRUG) {
         return true;
     }
 
@@ -292,14 +300,14 @@ bool _proto_action_can_use_on(int pid)
 }
 
 // 0x49EA24 proto_action_can_talk_to
-bool _proto_action_can_talk_to(int pid)
+bool _proto_action_can_talk_to(const ProtoId& protoId)
 {
     Proto* proto;
-    if (protoGetProto(pid, &proto) == -1) {
+    if (protoGetProto(protoId, &proto) == -1) {
         return false;
     }
 
-    if (objectTypeFromPid(pid) == OBJ_TYPE_CRITTER) {
+    if (protoId.objectType() == OBJ_TYPE_CRITTER) {
         return true;
     }
 
@@ -313,14 +321,14 @@ bool _proto_action_can_talk_to(int pid)
 // Likely returns true if item with given pid can be picked up.
 //
 // 0x49EA5C proto_action_can_pickup
-int _proto_action_can_pickup(int pid)
+int _proto_action_can_pickup(const ProtoId& protoId)
 {
-    if (objectTypeFromPid(pid) != OBJ_TYPE_ITEM) {
+    if (protoId.objectType() != OBJ_TYPE_ITEM) {
         return false;
     }
 
     Proto* proto;
-    if (protoGetProto(pid, &proto) == -1) {
+    if (protoGetProto(protoId, &proto) == -1) {
         return false;
     }
 
@@ -332,14 +340,13 @@ int _proto_action_can_pickup(int pid)
 }
 
 // 0x49EAA4 proto_get_msg_info
-char* protoGetMessage(int pid, int message)
+char* protoGetMessage(const ProtoId& protoId, PrototypeMessage message)
 {
     char* messageText = _proto_none_str;
-
     Proto* proto;
-    if (protoGetProto(pid, &proto) != -1) {
+    if (protoGetProto(protoId, &proto) != -1) {
         if (proto->messageId != -1) {
-            MessageList* messageList = &(_proto_msg_files[objectTypeFromPid(pid)]);
+            MessageList* messageList = &(_proto_msg_files[protoId.objectType()]);
 
             MessageListItem messageListItem;
             messageListItem.num = proto->messageId + message;
@@ -353,27 +360,27 @@ char* protoGetMessage(int pid, int message)
 }
 
 // 0x49EAFC proto_name
-char* protoGetName(int pid)
+char* protoGetName(const ProtoId& protoId)
 {
-    if (pid == 0x1000000) {
+    if (protoId == CritterProtoTypeId::Dude) {
         return critterGetName(gDude);
     }
 
-    return protoGetMessage(pid, PROTOTYPE_MESSAGE_NAME);
+    return protoGetMessage(protoId, PROTOTYPE_MESSAGE_NAME);
 }
 
 // 0x49EB1C proto_description
-char* protoGetDescription(int pid)
+char* protoGetDescription(const ProtoId& protoId)
 {
-    return protoGetMessage(pid, PROTOTYPE_MESSAGE_DESCRIPTION);
+    return protoGetMessage(protoId, PROTOTYPE_MESSAGE_DESCRIPTION);
 }
 
 // 0x49EB2C proto_item_init
-int proto_item_init(Proto* proto, int pid)
+int proto_item_init(Proto* proto, const ProtoId& protoId)
 {
-    int protoNum = frameIdFromPid(pid);
+    int protoNum = protoId.protoId();
 
-    proto->item.pid = -1;
+    proto->item.pid = ProtoId::kEmptyPid;
     proto->item.messageId = 100 * protoNum;
     proto->item.fid = ItemFrmId(static_cast<ItemFrameId>(protoNum - 1)).fid();
     if (!FrmId(proto->item.fid).exist()) {
@@ -438,13 +445,13 @@ int proto_item_subdata_init(Proto* proto, ItemType type)
         proto->item.extendedFlags |= PROTO_EXT_FLAG_CAN_USE_ON;
         break;
     case ITEM_TYPE_WEAPON:
-        proto->item.data.weapon.animationCode = WEAPON_ANIMATION_NONE;
+        proto->item.data.weapon.animationCode = WeaponAnimation::None;
         proto->item.data.weapon.minDamage = 0;
         proto->item.data.weapon.maxDamage = 0;
         proto->item.data.weapon.damageType = DAMAGE_TYPE_NORMAL;
         proto->item.data.weapon.maxRange1 = 0;
         proto->item.data.weapon.maxRange2 = 0;
-        proto->item.data.weapon.projectilePid = -1;
+        proto->item.data.weapon.projectilePid = ProtoId::kEmptyPid;
         proto->item.data.weapon.minStrength = 0;
         proto->item.data.weapon.actionPointCost1 = 0;
         proto->item.data.weapon.actionPointCost2 = 0;
@@ -452,7 +459,7 @@ int proto_item_subdata_init(Proto* proto, ItemType type)
         proto->item.data.weapon.perk = PERK_INVALID;
         proto->item.data.weapon.rounds = 0;
         proto->item.data.weapon.caliber = CALIBER_TYPE_NONE;
-        proto->item.data.weapon.ammoTypePid = -1;
+        proto->item.data.weapon.ammoTypePid = ProtoId::kEmptyPid;
         proto->item.data.weapon.ammoCapacity = 0;
         proto->item.data.weapon.soundCode = 0;
         break;
@@ -465,7 +472,7 @@ int proto_item_subdata_init(Proto* proto, ItemType type)
         proto->item.data.ammo.damageDivisor = 1;
         break;
     case ITEM_TYPE_MISC:
-        proto->item.data.misc.powerTypePid = -1;
+        proto->item.data.misc.powerTypePid = ProtoId::kEmptyPid;
         proto->item.data.misc.powerType = 20;
         break;
     case ITEM_TYPE_KEY:
@@ -480,17 +487,17 @@ int proto_item_subdata_init(Proto* proto, ItemType type)
 }
 
 // 0x49EDB4 proto_critter_init
-int proto_critter_init(Proto* proto, int pid)
+int proto_critter_init(Proto* proto, const ProtoId& protoId)
 {
     if (!_protos_been_initialized) {
         return -1;
     }
 
-    int num = frameIdFromPid(pid);
+    int num = protoId.protoId();
 
-    proto->pid = -1;
+    proto->pid = ProtoId::kEmptyPid;
     proto->messageId = 100 * num;
-    proto->fid = CritterFrmId(static_cast<CritterFrameId>(num - 1), ANIM_STAND, WEAPON_ANIMATION_NONE, ROTATION_NE).fid();
+    proto->fid = CritterFrmId(static_cast<CritterFrameId>(num - 1), ANIM_STAND, WeaponAnimation::None, ROTATION_NE).fid();
     proto->critter.lightDistance = 0;
     proto->critter.lightIntensity = 0;
     proto->critter.flags = PROTO_FLAG_LIGHT_THRU;
@@ -500,9 +507,9 @@ int proto_critter_init(Proto* proto, int pid)
     proto->critter.data.bodyType = BODY_TYPE_BIPED;
     proto->critter.headFid = -1;
     proto->critter.aiPacket = 1;
-    proto->critter.team = 0;
-    if (!FrmId(proto->fid).exist()) {
-        proto->fid = CritterFrmId(CritterFrameId::First, ANIM_STAND, WEAPON_ANIMATION_NONE, ROTATION_NE).fid();
+    proto->critter.team = 1;
+    if (!FrmId(proto).exist()) {
+        proto->fid = CritterFrmId(CritterFrameId::First, ANIM_STAND, WeaponAnimation::None, ROTATION_NE).fid();
     }
 
     CritterProtoData* data = &(proto->critter.data);
@@ -563,7 +570,16 @@ int objectDataRead(Object* obj, File* stream)
     // CE: Original code reads inventory items pointer which is meaningless.
     if (fileReadInt32(stream, &temp) == -1) return -1;
 
-    if (objectTypeFromPid(obj->pid) == OBJ_TYPE_CRITTER) {
+    if (inventory->length < 0
+        || inventory->capacity < inventory->length
+        || static_cast<size_t>(inventory->capacity) > std::numeric_limits<size_t>::max() / sizeof(InventoryItem)) {
+        debugPrint("\nError reading object: invalid inventory length/capacity %d/%d.\n",
+            inventory->length,
+            inventory->capacity);
+        return -1;
+    }
+
+    if (ProtoId(obj).objectType() == OBJ_TYPE_CRITTER) {
         if (fileReadInt32(stream, &(obj->data.critter.reaction)) == -1) return -1;
         if (objectCritterCombatDataRead(&(obj->data.critter.combat), stream) == -1) return -1;
         if (fileReadInt32(stream, &(obj->data.critter.hp)) == -1) return -1;
@@ -577,9 +593,10 @@ int objectDataRead(Object* obj, File* stream)
             obj->data.flags = 0;
         }
 
-        switch (objectTypeFromPid(obj->pid)) {
+        const ProtoId protoId = obj;
+        switch (protoId.objectType()) {
         case OBJ_TYPE_ITEM:
-            if (protoGetProto(obj->pid, &proto) == -1) return -1;
+            if (protoGetProto(protoId, &proto) == -1) return -1;
 
             switch (proto->item.type) {
             case ITEM_TYPE_WEAPON:
@@ -601,7 +618,7 @@ int objectDataRead(Object* obj, File* stream)
 
             break;
         case OBJ_TYPE_SCENERY:
-            if (protoGetProto(obj->pid, &proto) == -1) return -1;
+            if (protoGetProto(protoId, &proto) == -1) return -1;
 
             switch (proto->scenery.type) {
             case SCENERY_TYPE_DOOR:
@@ -637,10 +654,10 @@ int objectDataRead(Object* obj, File* stream)
 
             break;
         case OBJ_TYPE_MISC:
-            if (isExitGridPid(obj->pid)) {
+            if (isExitGridProtoId(obj)) {
                 if (fileReadInt32Enum<Map>(stream, &(obj->data.misc.map)) == -1) return -1;
                 if (fileReadInt32(stream, &(obj->data.misc.tile)) == -1) return -1;
-                if (fileReadInt32(stream, &(obj->data.misc.elevation)) == -1) return -1;
+                if (fileReadInt32Enum<MapElevation>(stream, &(obj->data.misc.elevation)) == -1) return -1;
                 if (fileReadInt32Enum<Rotation>(stream, &(obj->data.misc.rotation)) == -1) return -1;
             }
             break;
@@ -663,7 +680,8 @@ int objectDataWrite(Object* obj, File* stream)
     // CE: Original code writes inventory items pointer, which is meaningless.
     if (fileWriteInt32(stream, 0) == -1) return -1;
 
-    if (objectTypeFromPid(obj->pid) == OBJ_TYPE_CRITTER) {
+    const ProtoId protoId = obj;
+    if (protoId.objectType() == OBJ_TYPE_CRITTER) {
         if (fileWriteInt32(stream, data->flags) == -1) return -1;
         if (objectCritterCombatDataWrite(&(obj->data.critter.combat), stream) == -1) return -1;
         if (fileWriteInt32(stream, data->critter.hp) == -1) return -1;
@@ -672,9 +690,9 @@ int objectDataWrite(Object* obj, File* stream)
     } else {
         if (fileWriteInt32(stream, data->flags) == -1) return -1;
 
-        switch (objectTypeFromPid(obj->pid)) {
+        switch (protoId.objectType()) {
         case OBJ_TYPE_ITEM:
-            if (protoGetProto(obj->pid, &proto) == -1) return -1;
+            if (protoGetProto(protoId, &proto) == -1) return -1;
 
             switch (proto->item.type) {
             case ITEM_TYPE_WEAPON:
@@ -695,7 +713,7 @@ int objectDataWrite(Object* obj, File* stream)
             }
             break;
         case OBJ_TYPE_SCENERY:
-            if (protoGetProto(obj->pid, &proto) == -1) return -1;
+            if (protoGetProto(protoId, &proto) == -1) return -1;
 
             switch (proto->scenery.type) {
             case SCENERY_TYPE_DOOR:
@@ -722,7 +740,7 @@ int objectDataWrite(Object* obj, File* stream)
             }
             break;
         case OBJ_TYPE_MISC:
-            if (isExitGridPid(obj->pid)) {
+            if (isExitGridProtoId(obj)) {
                 if (fileWriteInt32Enum<Map>(stream, data->misc.map) == -1) return -1;
                 if (fileWriteInt32(stream, data->misc.tile) == -1) return -1;
                 if (fileWriteInt32(stream, data->misc.elevation) == -1) return -1;
@@ -751,11 +769,12 @@ static int _proto_update_gen(Object* obj)
     data->inventory.capacity = 0;
     data->inventory.items = nullptr;
 
-    if (protoGetProto(obj->pid, &proto) == -1) {
+    const ProtoId protoId = obj;
+    if (protoGetProto(protoId, &proto) == -1) {
         return -1;
     }
 
-    switch (objectTypeFromPid(obj->pid)) {
+    switch (protoId.objectType()) {
     case OBJ_TYPE_ITEM:
         switch (proto->item.type) {
         case ITEM_TYPE_CONTAINER:
@@ -800,9 +819,9 @@ static int _proto_update_gen(Object* obj)
         }
         break;
     case OBJ_TYPE_MISC:
-        if (isExitGridPid(obj->pid)) {
+        if (isExitGridProtoId(obj)) {
             data->misc.tile = -1;
-            data->misc.elevation = 0;
+            data->misc.elevation = ELEVATION_FIRST;
             data->misc.rotation = ROTATION_NE;
             data->misc.map = MAP_INVALID;
         }
@@ -821,17 +840,15 @@ int _proto_update_init(Object* obj)
         return -1;
     }
 
-    if (obj == nullptr) {
-        return -1;
-    }
+    const ProtoId protoId = obj;
 
-    if (obj->pid == -1) {
+    if (!protoId.valid()) {
         return -1;
     }
 
     memset(&(obj->data), 0, sizeof(ObjectData));
 
-    if (objectTypeFromPid(obj->pid) != OBJ_TYPE_CRITTER) {
+    if (protoId.objectType() != OBJ_TYPE_CRITTER) {
         return _proto_update_gen(obj);
     }
 
@@ -846,7 +863,7 @@ int _proto_update_init(Object* obj)
     obj->data.critter.combat.whoHitMe = nullptr;
 
     Proto* proto;
-    if (protoGetProto(obj->pid, &proto) != -1) {
+    if (protoGetProto(protoId, &proto) != -1) {
         data->critter.combat.aiPacket = proto->critter.aiPacket;
         data->critter.combat.team = proto->critter.team;
     }
@@ -858,7 +875,7 @@ int _proto_update_init(Object* obj)
 int _proto_dude_update_gender()
 {
     Proto* proto;
-    if (protoGetProto(0x1000000, &proto) == -1) {
+    if (protoGetProto(CritterProtoTypeId::Dude, &proto) == -1) {
         return -1;
     }
 
@@ -877,16 +894,16 @@ int _proto_dude_update_gender()
     _art_vault_guy_num = frmId;
 
     if (critterGetArmor(gDude) == nullptr) {
-        WeaponAnimation weaponAnimationCode = WEAPON_ANIMATION_NONE;
+        WeaponAnimation weaponAnimationCode = WeaponAnimation::None;
         if (critterGetItem2(gDude) != nullptr || critterGetItem1(gDude) != nullptr) {
-            weaponAnimationCode = weaponAnimationFromFid(gDude->fid);
+            weaponAnimationCode = FrmId(gDude).weaponAnimation();
         }
 
         const FrmId frmId = FrmId(_art_vault_guy_num, ANIM_STAND, weaponAnimationCode, ROTATION_NE);
         objectSetFrmId(gDude, frmId, nullptr);
     }
 
-    proto->fid = FrmId(_art_vault_guy_num, ANIM_STAND, WEAPON_ANIMATION_NONE, ROTATION_NE).fid();
+    proto->fid = FrmId(_art_vault_guy_num, ANIM_STAND, WeaponAnimation::None, ROTATION_NE).fid();
 
     return 0;
 }
@@ -897,7 +914,7 @@ int _proto_dude_init(const char* path)
 {
     _retval = 0;
 
-    gDudeProto.fid = FrmId(_art_vault_guy_num, ANIM_STAND, WEAPON_ANIMATION_NONE, ROTATION_NE).fid();
+    gDudeProto.fid = FrmId(_art_vault_guy_num, ANIM_STAND, WeaponAnimation::None, ROTATION_NE).fid();
 
     if (_init_true) {
         _obj_inven_free(&(gDude->data.inventory));
@@ -906,11 +923,11 @@ int _proto_dude_init(const char* path)
     _init_true = 1;
 
     Proto* proto;
-    if (protoGetProto(0x1000000, &proto) == -1) {
+    if (protoGetProto(CritterProtoTypeId::Dude, &proto) == -1) {
         return -1;
     }
 
-    protoGetProto(gDude->pid, &proto);
+    protoGetProto(gDude, &proto);
 
     _proto_update_init(gDude);
     gDude->data.critter.combat.aiPacket = 0;
@@ -949,11 +966,11 @@ int _proto_dude_init(const char* path)
 }
 
 // 0x49FBBC proto_scenery_init
-int proto_scenery_init(Proto* proto, int pid)
+int proto_scenery_init(Proto* proto, const ProtoId& protoId)
 {
-    int num = frameIdFromPid(pid);
+    int num = protoId.protoId();
 
-    proto->scenery.pid = -1;
+    proto->scenery.pid = ProtoId::kEmptyPid;
     proto->scenery.messageId = 100 * num;
     proto->scenery.fid = SceneryFrmId(static_cast<SceneryFrameId>(num - 1)).fid();
     if (!FrmId(proto->scenery.fid).exist()) {
@@ -1006,11 +1023,11 @@ int proto_scenery_subdata_init(Proto* proto, SceneryType type)
 }
 
 // 0x49FCFC proto_wall_init
-int proto_wall_init(Proto* proto, int pid)
+int proto_wall_init(Proto* proto, const ProtoId& protoId)
 {
-    int num = frameIdFromPid(pid);
+    int num = protoId.protoId();
 
-    proto->wall.pid = -1;
+    proto->wall.pid = ProtoId::kEmptyPid;
     proto->wall.messageId = 100 * num;
     proto->wall.fid = WallFrmId(static_cast<WallFrameId>(num - 1)).fid();
     if (!FrmId(proto->wall.fid).exist()) {
@@ -1027,11 +1044,11 @@ int proto_wall_init(Proto* proto, int pid)
 }
 
 // 0x49FD84 proto_tile_init
-int proto_tile_init(Proto* proto, int pid)
+int proto_tile_init(Proto* proto, const ProtoId& protoId)
 {
-    int num = frameIdFromPid(pid);
+    int num = protoId.protoId();
 
-    proto->tile.pid = -1;
+    proto->tile.pid = ProtoId::kEmptyPid;
     proto->tile.messageId = 100 * num;
     proto->tile.fid = TileFrmId(static_cast<TileFrameId>(num - 1)).fid();
     if (!FrmId(proto->tile.fid).exist()) {
@@ -1046,11 +1063,11 @@ int proto_tile_init(Proto* proto, int pid)
 }
 
 // 0x49FDFC proto_misc_init
-int proto_misc_init(Proto* proto, int pid)
+int proto_misc_init(Proto* proto, const ProtoId& protoId)
 {
-    int num = frameIdFromPid(pid);
+    int num = protoId.protoId();
 
-    proto->misc.pid = -1;
+    proto->misc.pid = ProtoId::kEmptyPid;
     proto->misc.messageId = 100 * num;
     proto->misc.fid = MiscFrmId(static_cast<MiscFrameId>(num - 1)).fid();
     if (!FrmId(proto->misc.fid).exist()) {
@@ -1065,27 +1082,25 @@ int proto_misc_init(Proto* proto, int pid)
 }
 
 // 0x49FE74 proto_copy_proto
-int proto_copy_proto(int srcPid, int dstPid)
+int proto_copy_proto(const ProtoId& srcProtoId, const ProtoId& dstProtoId)
 {
     Proto* src;
     Proto* dst;
 
-    ObjectType srcType = objectTypeFromPid(srcPid);
-    ObjectType dstType = objectTypeFromPid(dstPid);
-    if (srcType != dstType) {
+    if (srcProtoId.objectType() != dstProtoId.objectType()) {
         return -1;
     }
 
-    if (protoGetProto(srcPid, &src) == -1) {
+    if (protoGetProto(srcProtoId, &src) == -1) {
         return -1;
     }
 
-    if (protoGetProto(dstPid, &dst) == -1) {
+    if (protoGetProto(dstProtoId, &dst) == -1) {
         return -1;
     }
 
-    memcpy(dst, src, _proto_sizes[srcType]);
-    dst->pid = dstPid;
+    memcpy(dst, src, _proto_sizes[srcProtoId.objectType()]);
+    dst->pid = dstProtoId.pid();
 
     return 0;
 }
@@ -1097,7 +1112,7 @@ bool proto_is_subtype(Proto* proto, int subtype)
         return true;
     }
 
-    switch (objectTypeFromPid(proto->pid)) {
+    switch (ProtoId(proto).objectType()) {
     case OBJ_TYPE_ITEM:
         return proto->item.type == subtype;
     case OBJ_TYPE_SCENERY:
@@ -1107,240 +1122,228 @@ bool proto_is_subtype(Proto* proto, int subtype)
     }
 }
 
-// proto_data_member
-// 0x49FFD8 proto_data_member
-int protoGetDataMember(int pid, int member, ProtoDataMemberValue* value)
+ProtoDataMemberType protoGetItemDataMember(Proto* proto, ItemDataMember member, ProtoDataMemberValue* value)
 {
-    Proto* proto;
-    if (protoGetProto(pid, &proto) == -1) {
-        return -1;
-    }
-
-    switch (objectTypeFromPid(pid)) {
-    case OBJ_TYPE_ITEM:
+    if (proto != nullptr && value != nullptr) {
         switch (member) {
         case ITEM_DATA_MEMBER_PID:
             value->integerValue = proto->pid;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case ITEM_DATA_MEMBER_NAME:
-            // NOTE: uninline
-            value->stringValue = protoGetName(proto->scenery.pid);
+            value->stringValue = protoGetName(ProtoId(proto->item.pid));
             return PROTO_DATA_MEMBER_TYPE_STRING;
         case ITEM_DATA_MEMBER_DESCRIPTION:
-            // NOTE: Uninline.
-            value->stringValue = protoGetDescription(proto->pid);
+            value->stringValue = protoGetDescription(proto);
             return PROTO_DATA_MEMBER_TYPE_STRING;
         case ITEM_DATA_MEMBER_FID:
             value->integerValue = proto->fid;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case ITEM_DATA_MEMBER_LIGHT_DISTANCE:
             value->integerValue = proto->item.lightDistance;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case ITEM_DATA_MEMBER_LIGHT_INTENSITY:
             value->integerValue = proto->item.lightIntensity;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case ITEM_DATA_MEMBER_FLAGS:
             value->integerValue = proto->item.flags;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case ITEM_DATA_MEMBER_EXTENDED_FLAGS:
             value->integerValue = proto->item.extendedFlags;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case ITEM_DATA_MEMBER_SID:
             value->integerValue = proto->item.sid;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case ITEM_DATA_MEMBER_TYPE:
             value->integerValue = proto->item.type;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case ITEM_DATA_MEMBER_MATERIAL:
             value->integerValue = proto->item.material;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case ITEM_DATA_MEMBER_SIZE:
             value->integerValue = proto->item.size;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case ITEM_DATA_MEMBER_WEIGHT:
             value->integerValue = proto->item.weight;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case ITEM_DATA_MEMBER_COST:
             value->integerValue = proto->item.cost;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case ITEM_DATA_MEMBER_INVENTORY_FID:
             value->integerValue = proto->item.inventoryFid;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case ITEM_DATA_MEMBER_WEAPON_RANGE:
             if (proto->item.type == ITEM_TYPE_WEAPON) {
                 value->integerValue = proto->item.data.weapon.maxRange1;
             }
-            break;
-        default:
-            debugPrint("\n\tError: Unimp'd data member in member in proto_data_member!");
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         }
-        break;
-    case OBJ_TYPE_CRITTER:
+    }
+
+    return PROTO_DATA_MEMBER_TYPE_INVALID;
+}
+
+ProtoDataMemberType protoGetCritterDataMember(Proto* proto, CritterDataMember member, ProtoDataMemberValue* value)
+{
+    if (proto != nullptr && value != nullptr) {
         switch (member) {
         case CRITTER_DATA_MEMBER_PID:
             value->integerValue = proto->critter.pid;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case CRITTER_DATA_MEMBER_NAME:
-            // NOTE: Uninline.
-            value->stringValue = protoGetName(proto->critter.pid);
+            value->stringValue = protoGetName(ProtoId(proto->critter.pid));
             return PROTO_DATA_MEMBER_TYPE_STRING;
         case CRITTER_DATA_MEMBER_DESCRIPTION:
-            // NOTE: Uninline.
-            value->stringValue = protoGetDescription(proto->critter.pid);
+            value->stringValue = protoGetDescription(ProtoId(proto->critter.pid));
             return PROTO_DATA_MEMBER_TYPE_STRING;
         case CRITTER_DATA_MEMBER_FID:
             value->integerValue = proto->critter.fid;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case CRITTER_DATA_MEMBER_LIGHT_DISTANCE:
             value->integerValue = proto->critter.lightDistance;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case CRITTER_DATA_MEMBER_LIGHT_INTENSITY:
             value->integerValue = proto->critter.lightIntensity;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case CRITTER_DATA_MEMBER_FLAGS:
             value->integerValue = proto->critter.flags;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case CRITTER_DATA_MEMBER_EXTENDED_FLAGS:
             value->integerValue = proto->critter.extendedFlags;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case CRITTER_DATA_MEMBER_SID:
             value->integerValue = proto->critter.sid;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case CRITTER_DATA_MEMBER_HEAD_FID:
             value->integerValue = proto->critter.headFid;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case CRITTER_DATA_MEMBER_BODY_TYPE:
             value->integerValue = proto->critter.data.bodyType;
-            break;
-        default:
-            debugPrint("\n\tError: Unimp'd data member in member in proto_data_member!");
+            return PROTO_DATA_MEMBER_TYPE_INT;
+        case CRITTER_DATA_MEMBER_DATA:
             break;
         }
-        break;
-    case OBJ_TYPE_SCENERY:
+    }
+
+    return PROTO_DATA_MEMBER_TYPE_INVALID;
+}
+
+ProtoDataMemberType protoGetSceneryDataMember(Proto* proto, SceneryDataMember member, ProtoDataMemberValue* value)
+{
+    if (proto != nullptr && value != nullptr) {
         switch (member) {
         case SCENERY_DATA_MEMBER_PID:
             value->integerValue = proto->scenery.pid;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case SCENERY_DATA_MEMBER_NAME:
-            // NOTE: Uninline.
-            value->stringValue = protoGetName(proto->scenery.pid);
+            value->stringValue = protoGetName(ProtoId(proto->scenery.pid));
             return PROTO_DATA_MEMBER_TYPE_STRING;
         case SCENERY_DATA_MEMBER_DESCRIPTION:
-            // NOTE: Uninline.
-            value->stringValue = protoGetDescription(proto->scenery.pid);
+            value->stringValue = protoGetDescription(ProtoId(proto->scenery.pid));
             return PROTO_DATA_MEMBER_TYPE_STRING;
         case SCENERY_DATA_MEMBER_FID:
             value->integerValue = proto->scenery.fid;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case SCENERY_DATA_MEMBER_LIGHT_DISTANCE:
             value->integerValue = proto->scenery.lightDistance;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case SCENERY_DATA_MEMBER_LIGHT_INTENSITY:
             value->integerValue = proto->scenery.lightIntensity;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case SCENERY_DATA_MEMBER_FLAGS:
             value->integerValue = proto->scenery.flags;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case SCENERY_DATA_MEMBER_EXTENDED_FLAGS:
             value->integerValue = proto->scenery.extendedFlags;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case SCENERY_DATA_MEMBER_SID:
             value->integerValue = proto->scenery.sid;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case SCENERY_DATA_MEMBER_TYPE:
             value->integerValue = proto->scenery.type;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case SCENERY_DATA_MEMBER_MATERIAL:
             value->integerValue = proto->scenery.material;
-            break;
-        default:
-            debugPrint("\n\tError: Unimp'd data member in member in proto_data_member!");
+            return PROTO_DATA_MEMBER_TYPE_INT;
+        case SCENERY_DATA_MEMBER_DATA:
             break;
         }
-        break;
-    case OBJ_TYPE_WALL:
+    }
+
+    return PROTO_DATA_MEMBER_TYPE_INVALID;
+}
+
+ProtoDataMemberType protoGetWallDataMember(Proto* proto, WallDataMember member, ProtoDataMemberValue* value)
+{
+    if (proto != nullptr && value != nullptr) {
         switch (member) {
         case WALL_DATA_MEMBER_PID:
             value->integerValue = proto->wall.pid;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case WALL_DATA_MEMBER_NAME:
-            // NOTE: Uninline.
-            value->stringValue = protoGetName(proto->wall.pid);
+            value->stringValue = protoGetName(ProtoId(proto->wall.pid));
             return PROTO_DATA_MEMBER_TYPE_STRING;
         case WALL_DATA_MEMBER_DESCRIPTION:
-            // NOTE: Uninline.
-            value->stringValue = protoGetDescription(proto->wall.pid);
+            value->stringValue = protoGetDescription(ProtoId(proto->wall.pid));
             return PROTO_DATA_MEMBER_TYPE_STRING;
         case WALL_DATA_MEMBER_FID:
             value->integerValue = proto->wall.fid;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case WALL_DATA_MEMBER_LIGHT_DISTANCE:
             value->integerValue = proto->wall.lightDistance;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case WALL_DATA_MEMBER_LIGHT_INTENSITY:
             value->integerValue = proto->wall.lightIntensity;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case WALL_DATA_MEMBER_FLAGS:
             value->integerValue = proto->wall.flags;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case WALL_DATA_MEMBER_EXTENDED_FLAGS:
             value->integerValue = proto->wall.extendedFlags;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case WALL_DATA_MEMBER_SID:
             value->integerValue = proto->wall.sid;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case WALL_DATA_MEMBER_MATERIAL:
             value->integerValue = proto->wall.material;
-            break;
-        default:
-            debugPrint("\n\tError: Unimp'd data member in member in proto_data_member!");
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         }
-        break;
-    case OBJ_TYPE_TILE:
-        debugPrint("\n\tError: Unimp'd data member in member in proto_data_member!");
-        break;
-    case OBJ_TYPE_MISC:
+    }
+
+    return PROTO_DATA_MEMBER_TYPE_INVALID;
+}
+
+ProtoDataMemberType protoGetMiscDataMember(Proto* proto, MiscDataMember member, ProtoDataMemberValue* value)
+{
+    if (proto != nullptr && value != nullptr) {
         switch (member) {
         case MISC_DATA_MEMBER_PID:
             value->integerValue = proto->misc.pid;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case MISC_DATA_MEMBER_NAME:
-            // NOTE: Uninline.
-            value->stringValue = protoGetName(proto->misc.pid);
+            value->stringValue = protoGetName(ProtoId(proto->misc.pid));
             return PROTO_DATA_MEMBER_TYPE_STRING;
         case MISC_DATA_MEMBER_DESCRIPTION:
-            // NOTE: Uninline.
-            value->stringValue = protoGetDescription(proto->misc.pid);
-            // FIXME: Errornously report type as int, should be string.
-            return PROTO_DATA_MEMBER_TYPE_INT;
+            value->stringValue = protoGetDescription(ProtoId(proto->misc.pid));
+            return PROTO_DATA_MEMBER_TYPE_STRING;
         case MISC_DATA_MEMBER_FID:
             value->integerValue = proto->misc.fid;
-            return 1;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case MISC_DATA_MEMBER_LIGHT_DISTANCE:
             value->integerValue = proto->misc.lightDistance;
-            return 1;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case MISC_DATA_MEMBER_LIGHT_INTENSITY:
             value->integerValue = proto->misc.lightIntensity;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case MISC_DATA_MEMBER_FLAGS:
             value->integerValue = proto->misc.flags;
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         case MISC_DATA_MEMBER_EXTENDED_FLAGS:
             value->integerValue = proto->misc.extendedFlags;
-            break;
-        default:
-            debugPrint("\n\tError: Unimp'd data member in member in proto_data_member!");
-            break;
+            return PROTO_DATA_MEMBER_TYPE_INT;
         }
-        break;
-    default:
-        break;
     }
 
-    return PROTO_DATA_MEMBER_TYPE_INT;
+    return PROTO_DATA_MEMBER_TYPE_INVALID;
 }
 
 // proto_init
@@ -1362,13 +1365,14 @@ int protoInit()
     strcpy(path + len, "\\items");
     compat_mkdir(path);
 
+    constexpr ProtoId kDudeProtoId = ProtoId(CritterProtoTypeId::Dude);
     // TODO: Get rid of cast.
-    proto_critter_init((Proto*)&gDudeProto, 0x1000000);
+    proto_critter_init((Proto*)&gDudeProto, kDudeProtoId);
 
-    gDudeProto.pid = 0x1000000;
-    gDudeProto.fid = CritterFrmId(CritterFrameId::First, ANIM_STAND, WEAPON_ANIMATION_NONE, ROTATION_NE).fid();
+    gDudeProto.pid = kDudeProtoId.pid();
+    gDudeProto.fid = CritterFrmId(CritterFrameId::First, ANIM_STAND, WeaponAnimation::None, ROTATION_NE).fid();
 
-    gDude->pid = 0x1000000;
+    gDude->pid = kDudeProtoId.pid();
     gDude->sid = 1;
 
     for (ObjectType i = OBJ_TYPE_FIRST; i < OBJ_TYPE_PROTO_COUNT; i++) {
@@ -1389,7 +1393,7 @@ int protoInit()
     }
 
     for (ObjectType i = OBJ_TYPE_FIRST; i < OBJ_TYPE_PROTO_COUNT; i++) {
-        snprintf(path, sizeof(path), "%spro_%.4s%s", asc_5186C8, artGetObjectTypeName(i), ".msg");
+        snprintf(path, sizeof(path), "%spro_%.4s%s", gGameMsgPath, artGetObjectTypeName(i), ".msg");
 
         if (!messageListLoad(&(_proto_msg_files[i]), path)) {
             debugPrint("\nError: Loading proto message files!");
@@ -1427,7 +1431,7 @@ int protoInit()
         return -1;
     }
 
-    snprintf(path, sizeof(path), "%sproto.msg", asc_5186C8);
+    snprintf(path, sizeof(path), "%sproto.msg", gGameMsgPath);
 
     if (!messageListLoad(&gProtoMessageList, path)) {
         debugPrint("\nError: Loading main proto message file!");
@@ -1479,12 +1483,13 @@ int protoInit()
 // 0x4A0814 proto_reset
 void protoReset()
 {
+    constexpr ProtoId kDudeProtoId = ProtoId(CritterProtoTypeId::Dude);
     // TODO: Get rid of cast.
-    proto_critter_init((Proto*)&gDudeProto, 0x1000000);
-    gDudeProto.pid = 0x1000000;
-    gDudeProto.fid = CritterFrmId(CritterFrameId::First, ANIM_STAND, WEAPON_ANIMATION_NONE, ROTATION_NE).fid();
+    proto_critter_init((Proto*)&gDudeProto, kDudeProtoId);
+    gDudeProto.pid = kDudeProtoId.pid();
+    gDudeProto.fid = CritterFrmId(CritterFrameId::First, ANIM_STAND, WeaponAnimation::None, ROTATION_NE).fid();
 
-    gDude->pid = 0x1000000;
+    gDude->pid = kDudeProtoId.pid();
     gDude->sid = -1;
     gDude->flags &= ~OBJECT_FLAG_0xFC000;
 
@@ -1519,6 +1524,15 @@ void protoExit()
 // 0x4A08E0 proto_header_load
 static int _proto_header_load()
 {
+    constexpr ProtoId kProtoIds[OBJ_TYPE_PROTO_COUNT] = {
+        ProtoId(ItemProtoTypeId::Reserved),
+        ProtoId(CritterProtoTypeId::Reserved),
+        ProtoId(SceneryProtoTypeId::Reserved),
+        ProtoId(WallProtoTypeId::Reserved),
+        ProtoId(TileProtoTypeId::Reserved),
+        ProtoId(MiscProtoTypeId::Reserved)
+    };
+
     for (ObjectType index = OBJ_TYPE_FIRST; index < OBJ_TYPE_PROTO_COUNT; index++) {
         ProtoList* ptr = &(_protoLists[index]);
         ptr->head = nullptr;
@@ -1527,7 +1541,7 @@ static int _proto_header_load()
         ptr->max_entries_num = 1;
 
         char path[COMPAT_MAX_PATH];
-        proto_make_path(path, index << 24);
+        proto_make_path(path, kProtoIds[index]);
         strcat(path, "\\");
         strcat(path, artGetObjectTypeName(index));
         strcat(path, ".lst");
@@ -1676,7 +1690,7 @@ static int protoRead(Proto* proto, File* stream)
     if (fileReadInt32(stream, &(proto->messageId)) == -1) return -1;
     if (fileReadInt32(stream, &(proto->fid)) == -1) return -1;
 
-    switch (objectTypeFromPid(proto->pid)) {
+    switch (ProtoId(proto).objectType()) {
     case OBJ_TYPE_ITEM:
         if (fileReadInt32(stream, &(proto->item.lightDistance)) == -1) return -1;
         if (_db_freadInt(stream, &(proto->item.lightIntensity)) == -1) return -1;
@@ -1861,7 +1875,7 @@ static int protoWrite(Proto* proto, File* stream)
     if (fileWriteInt32(stream, proto->messageId) == -1) return -1;
     if (fileWriteInt32(stream, proto->fid) == -1) return -1;
 
-    switch (objectTypeFromPid(proto->pid)) {
+    switch (ProtoId(proto).objectType()) {
     case OBJ_TYPE_ITEM:
         if (fileWriteInt32(stream, proto->item.lightDistance) == -1) return -1;
         if (_db_fwriteLong(stream, proto->item.lightIntensity) == -1) return -1;
@@ -1931,18 +1945,18 @@ static int protoWrite(Proto* proto, File* stream)
 }
 
 // 0x4A1B30 proto_save_pid
-int _proto_save_pid(int pid)
+int protoSaveProtoId(const ProtoId& protoId)
 {
     Proto* proto;
-    if (protoGetProto(pid, &proto) == -1) {
+    if (protoGetProto(protoId, &proto) == -1) {
         return -1;
     }
 
     char path[260];
-    proto_make_path(path, pid);
+    proto_make_path(path, protoId);
     strcat(path, "\\");
 
-    _proto_list_str(pid, path + strlen(path));
+    _proto_list_str(protoId, path + strlen(path));
 
     File* stream = fileOpen(path, "wb");
     if (stream == nullptr) {
@@ -1957,13 +1971,13 @@ int _proto_save_pid(int pid)
 }
 
 // 0x4A1C3C proto_load_pid
-static int _proto_load_pid(int pid, Proto** protoPtr)
+static int protoLoadProtoId(const ProtoId& protoId, Proto** protoPtr)
 {
     char path[COMPAT_MAX_PATH];
-    proto_make_path(path, pid);
+    proto_make_path(path, protoId);
     strcat(path, "\\");
 
-    if (_proto_list_str(pid, path + strlen(path)) == -1) {
+    if (_proto_list_str(protoId, path + strlen(path)) == -1) {
         return -1;
     }
 
@@ -1974,7 +1988,7 @@ static int _proto_load_pid(int pid, Proto** protoPtr)
         return -1;
     }
 
-    if (_proto_find_free_subnode(objectTypeFromPid(pid), protoPtr) == -1) {
+    if (_proto_find_free_subnode(protoId.objectType(), protoPtr) == -1) {
         fileClose(stream);
         return -1;
     }
@@ -2040,7 +2054,7 @@ static int _proto_find_free_subnode(ObjectType type, Proto** protoPtr)
 }
 
 // 0x4A1E90 proto_new
-int proto_new(int* pid, ObjectType type)
+int proto_new(ProtoId& protoId, ObjectType type)
 {
     Proto* proto;
 
@@ -2048,31 +2062,32 @@ int proto_new(int* pid, ObjectType type)
         return -1;
     }
 
-    *pid = _proto_new_id(type) | (type << 24);
+    protoId = _proto_new_id(type);
+
     switch (type) {
     case OBJ_TYPE_ITEM:
-        proto_item_init(proto, *pid);
-        proto->item.pid = *pid;
+        proto_item_init(proto, protoId);
+        proto->item.pid = protoId.pid();
         break;
     case OBJ_TYPE_CRITTER:
-        proto_critter_init(proto, *pid);
-        proto->critter.pid = *pid;
+        proto_critter_init(proto, protoId);
+        proto->critter.pid = protoId.pid();
         break;
     case OBJ_TYPE_SCENERY:
-        proto_scenery_init(proto, *pid);
-        proto->scenery.pid = *pid;
+        proto_scenery_init(proto, protoId);
+        proto->scenery.pid = protoId.pid();
         break;
     case OBJ_TYPE_WALL:
-        proto_wall_init(proto, *pid);
-        proto->wall.pid = *pid;
+        proto_wall_init(proto, protoId);
+        proto->wall.pid = protoId.pid();
         break;
     case OBJ_TYPE_TILE:
-        proto_tile_init(proto, *pid);
-        proto->tile.pid = *pid;
+        proto_tile_init(proto, protoId);
+        proto->tile.pid = protoId.pid();
         break;
     case OBJ_TYPE_MISC:
-        proto_misc_init(proto, *pid);
-        proto->misc.pid = *pid;
+        proto_misc_init(proto, protoId);
+        proto->misc.pid = protoId.pid();
         break;
     default:
         return -1;
@@ -2134,25 +2149,25 @@ void _proto_remove_all()
 
 // proto_ptr
 // 0x4A2108 proto_ptr
-int protoGetProto(int pid, Proto** protoPtr)
+int protoGetProto(const ProtoId& protoId, Proto** protoPtr)
 {
     *protoPtr = nullptr;
 
-    if (pid == -1) {
+    if (!protoId.valid()) {
         return -1;
     }
 
-    if (pid == 0x1000000) {
+    if (protoId == CritterProtoTypeId::Dude) {
         *protoPtr = (Proto*)&gDudeProto;
         return 0;
     }
 
-    ProtoList* protoList = &(_protoLists[objectTypeFromPid(pid)]);
+    ProtoList* protoList = &(_protoLists[protoId.objectType()]);
     ProtoListExtent* protoListExtent = protoList->head;
     while (protoListExtent != nullptr) {
         for (int index = 0; index < protoListExtent->length; index++) {
             Proto* proto = (Proto*)protoListExtent->proto[index];
-            if (pid == proto->pid) {
+            if (protoId == ProtoId(proto)) {
                 *protoPtr = proto;
                 return 0;
             }
@@ -2162,20 +2177,35 @@ int protoGetProto(int pid, Proto** protoPtr)
 
     if (protoList->head != nullptr && protoList->tail != nullptr) {
         if (PROTO_LIST_EXTENT_SIZE * protoList->length - (PROTO_LIST_EXTENT_SIZE - protoList->tail->length) > PROTO_LIST_MAX_ENTRIES) {
-            _proto_remove_some_list(objectTypeFromPid(pid));
+            _proto_remove_some_list(protoId.objectType());
         }
     }
 
-    return _proto_load_pid(pid, protoPtr);
+    return protoLoadProtoId(protoId, protoPtr);
 }
 
 // 0x4A21DC proto_new_id
-static int _proto_new_id(ObjectType type)
+static ProtoId _proto_new_id(ObjectType type)
 {
     int result = _protoLists[type].max_entries_num;
     _protoLists[type].max_entries_num = result + 1;
 
-    return result;
+    switch (type) {
+    case OBJ_TYPE_ITEM:
+        return static_cast<ItemProtoTypeId>(result);
+    case OBJ_TYPE_CRITTER:
+        return static_cast<CritterProtoTypeId>(result);
+    case OBJ_TYPE_SCENERY:
+        return static_cast<SceneryProtoTypeId>(result);
+    case OBJ_TYPE_WALL:
+        return static_cast<WallProtoTypeId>(result);
+    case OBJ_TYPE_TILE:
+        return static_cast<TileProtoTypeId>(result);
+    case OBJ_TYPE_MISC:
+        return static_cast<MiscProtoTypeId>(result);
+    default:
+        return ProtoId::Empty();
+    }
 }
 
 // 0x4A2214 proto_max_id
@@ -2188,7 +2218,7 @@ int proto_max_id(ObjectType type)
 int _ResetPlayer()
 {
     Proto* proto;
-    protoGetProto(gDude->pid, &proto);
+    protoGetProto(gDude, &proto);
 
     pcStatsReset();
     protoCritterDataResetStats(&(proto->critter.data));

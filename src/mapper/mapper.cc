@@ -77,7 +77,7 @@ static void mapper_load_toolbar(ObjectType type, int* out_offset);
 static void mapper_save_toolbar();
 static void redraw_toolname();
 static void clear_toolname();
-static void update_toolname(int* pid, ObjectType type, int id);
+static void update_toolname(ProtoId& protoId, ObjectType type, int id);
 static void update_high_obj_name(Object* obj);
 static void mapper_destroy_highlight_obj(Object** a1, Object** a2);
 static void mapper_refresh_rotation();
@@ -244,7 +244,7 @@ char** menu_names[] = {
 };
 
 // 0x559748
-MapTransition mapInfo = { MAP_INVALID, -1, 0, ROTATION_NE };
+MapTransition mapInfo = { MAP_INVALID, ELEVATION_INVALID, 0, ROTATION_NE };
 
 // 0x559880
 int max_art_buttons = 7;
@@ -748,7 +748,7 @@ void MapperInit()
 
 static int loadMapperLbm(int lbmBufWidth, int lbmBufHeight)
 {
-    lbm_buf = (unsigned char*)internal_malloc(lbmBufWidth * lbmBufHeight);
+    lbm_buf = (unsigned char*)internal_malloc(static_cast<size_t>(lbmBufWidth) * lbmBufHeight);
     return load_lbm_to_buf("data\\mapper2.lbm",
         lbm_buf,
         0,
@@ -816,7 +816,7 @@ int mapper_edit_init(int argc, char** argv)
 
     setup_map_dirs();
     mapper_load_toolbar(OBJ_TYPE_TILE, nullptr);
-    art_shape = (unsigned char*)internal_malloc(art_scale_height * art_scale_width);
+    art_shape = (unsigned char*)internal_malloc(static_cast<size_t>(art_scale_height) * art_scale_width);
     if (art_shape == nullptr) {
         printf("Can't malloc memory!!\n");
         exit(1);
@@ -838,7 +838,7 @@ int mapper_edit_init(int argc, char** argv)
         screenWidth,
         100,
         static_cast<ColorWithFlags>(256),
-        0);
+        WINDOW_NONE);
 
     tool_buf = windowGetBuffer(tool_win);
 
@@ -846,34 +846,34 @@ int mapper_edit_init(int argc, char** argv)
 
     blitBufferToBuffer(lbm_buf + 406 * lbmBufWidth + 101, 18, 23, lbmBufWidth, l_up, 18);
     blitBufferToBuffer(lbm_buf + 253 * lbmBufWidth + 101, 18, 23, lbmBufWidth, l_down, 18);
-    buttonCreate(tool_win, 101, 26, 18, 23, -1, -1, kBtnScrollLeft, -1, l_up, l_down, nullptr, 0);
+    buttonCreate(tool_win, 101, 26, 18, 23, -1, -1, kBtnScrollLeft, -1, l_up, l_down, nullptr, BUTTON_FLAG_NONE);
 
     blitBufferToBuffer(lbm_buf + 406 * lbmBufWidth + 622, 18, 23, lbmBufWidth, r_up, 18);
     blitBufferToBuffer(lbm_buf + 253 * lbmBufWidth + 622, 18, 23, lbmBufWidth, r_down, 18);
-    buttonCreate(tool_win, _scr_size.right - 18, 26, 18, 23, -1, -1, kBtnScrollRight, -1, r_up, r_down, nullptr, 0);
+    buttonCreate(tool_win, _scr_size.right - 18, 26, 18, 23, -1, -1, kBtnScrollRight, -1, r_up, r_down, nullptr, BUTTON_FLAG_NONE);
 
     blitBufferToBuffer(lbm_buf + 381 * lbmBufWidth + 101, 18, 23, lbmBufWidth, shift_l_up, 18);
     blitBufferToBuffer(lbm_buf + 228 * lbmBufWidth + 101, 18, 23, lbmBufWidth, shift_l_down, 18);
-    buttonCreate(tool_win, 101, 1, 18, 23, -1, -1, kBtnScrollPageLeft, -1, shift_l_up, shift_l_down, nullptr, 0);
+    buttonCreate(tool_win, 101, 1, 18, 23, -1, -1, kBtnScrollPageLeft, -1, shift_l_up, shift_l_down, nullptr, BUTTON_FLAG_NONE);
 
     blitBufferToBuffer(lbm_buf + 381 * lbmBufWidth + 622, 18, 23, lbmBufWidth, shift_r_up, 18);
     blitBufferToBuffer(lbm_buf + 228 * lbmBufWidth + 622, 18, 23, lbmBufWidth, shift_r_down, 18);
-    buttonCreate(tool_win, _scr_size.right - 18, 1, 18, 23, -1, -1, kBtnScrollPageRight, -1, shift_r_up, shift_r_down, nullptr, 0);
+    buttonCreate(tool_win, _scr_size.right - 18, 1, 18, 23, -1, -1, kBtnScrollPageRight, -1, shift_r_up, shift_r_down, nullptr, BUTTON_FLAG_NONE);
 
     for (index = 0; index < max_art_buttons; index++) {
-        int btn = buttonCreate(tool_win, index * (art_scale_width + 1) + 121, 1, art_scale_width, art_scale_height, index + max_art_buttons + 161, 58, 160 + index, -1, nullptr, nullptr, nullptr, 0);
+        int btn = buttonCreate(tool_win, index * (art_scale_width + 1) + 121, 1, art_scale_width, art_scale_height, index + max_art_buttons + 161, 58, 160 + index, -1, nullptr, nullptr, nullptr, BUTTON_FLAG_NONE);
         buttonSetRightMouseCallbacks(btn, 160 + index, -1, nullptr, nullptr);
     }
 
     // ELEVATION INC
     blitBufferToBuffer(lbm_buf + 431 * lbmBufWidth + 1, 18, 23, lbmBufWidth, einc_up, 18);
     blitBufferToBuffer(lbm_buf + 325 * lbmBufWidth + 1, 18, 23, lbmBufWidth, einc_down, 18);
-    buttonCreate(tool_win, 1, 51, 18, 23, -1, -1, kBtnElevUp, -1, einc_up, einc_down, nullptr, 0);
+    buttonCreate(tool_win, 1, 51, 18, 23, -1, -1, kBtnElevUp, -1, einc_up, einc_down, nullptr, BUTTON_FLAG_NONE);
 
     // ELEVATION DEC
     blitBufferToBuffer(lbm_buf + 456 * lbmBufWidth + 1, 18, 23, lbmBufWidth, edec_up, 18);
     blitBufferToBuffer(lbm_buf + 350 * lbmBufWidth + 1, 18, 23, lbmBufWidth, edec_down, 18);
-    buttonCreate(tool_win, 1, 76, 18, 23, -1, -1, kBtnElevDown, -1, edec_up, edec_down, nullptr, 0);
+    buttonCreate(tool_win, 1, 76, 18, 23, -1, -1, kBtnElevDown, -1, edec_up, edec_down, nullptr, BUTTON_FLAG_NONE);
 
     // ELEVATION
     for (index = 0; index < 4; index++) {
@@ -932,12 +932,12 @@ int mapper_edit_init(int argc, char** argv)
     // HEIGHT INC
     blitBufferToBuffer(lbm_buf + 431 * lbmBufWidth + 251, 18, 23, lbmBufWidth, height_inc_up, 18);
     blitBufferToBuffer(lbm_buf + 325 * lbmBufWidth + 251, 18, 23, lbmBufWidth, height_inc_down, 18);
-    buttonCreate(tool_win, 251, 51, 18, 23, -1, -1, kBtnRotateRight, -1, height_inc_up, height_inc_down, nullptr, 0);
+    buttonCreate(tool_win, 251, 51, 18, 23, -1, -1, kBtnRotateRight, -1, height_inc_up, height_inc_down, nullptr, BUTTON_FLAG_NONE);
 
     // HEIGHT DEC
     blitBufferToBuffer(lbm_buf + 456 * lbmBufWidth + 251, 18, 23, lbmBufWidth, height_dec_up, 18);
     blitBufferToBuffer(lbm_buf + 350 * lbmBufWidth + 251, 18, 23, lbmBufWidth, height_dec_down, 18);
-    buttonCreate(tool_win, 251, 76, 18, 23, -1, -1, kBtnRotateLeft, -1, height_dec_up, height_dec_down, nullptr, 0);
+    buttonCreate(tool_win, 251, 76, 18, 23, -1, -1, kBtnRotateLeft, -1, height_dec_up, height_dec_down, nullptr, BUTTON_FLAG_NONE);
 
     // ARROWS
     for (index = 0; index < ROTATION_COUNT; index++) {
@@ -966,22 +966,22 @@ int mapper_edit_init(int argc, char** argv)
     // COPY
     blitBufferToBuffer(lbm_buf + 435 * lbmBufWidth + 325, 49, 19, lbmBufWidth, copy_up, 49);
     blitBufferToBuffer(lbm_buf + 329 * lbmBufWidth + 325, 49, 19, lbmBufWidth, copy_down, 49);
-    copy_bid = buttonCreate(tool_win, 325, 55, 49, 19, -1, -1, kBtnCopy, -1, copy_up, copy_down, nullptr, 0);
+    copy_bid = buttonCreate(tool_win, 325, 55, 49, 19, -1, -1, kBtnCopy, -1, copy_up, copy_down, nullptr, BUTTON_FLAG_NONE);
 
     // PASTE
     blitBufferToBuffer(lbm_buf + 457 * lbmBufWidth + 325, 49, 19, lbmBufWidth, paste_up, 49);
     blitBufferToBuffer(lbm_buf + 351 * lbmBufWidth + 325, 49, 19, lbmBufWidth, paste_down, 49);
-    paste_bid = buttonCreate(tool_win, 325, 77, 49, 19, -1, -1, kBtnPaste, -1, paste_up, paste_down, nullptr, 0);
+    paste_bid = buttonCreate(tool_win, 325, 77, 49, 19, -1, -1, kBtnPaste, -1, paste_up, paste_down, nullptr, BUTTON_FLAG_NONE);
 
     // EDIT
     blitBufferToBuffer(lbm_buf + 435 * lbmBufWidth + 378, 49, 19, lbmBufWidth, edit_up, 49);
     blitBufferToBuffer(lbm_buf + 329 * lbmBufWidth + 378, 49, 19, lbmBufWidth, edit_down, 49);
-    edit_bid = buttonCreate(tool_win, 378, 55, 49, 19, -1, -1, kBtnEdit, -1, edit_up, edit_down, nullptr, 0);
+    edit_bid = buttonCreate(tool_win, 378, 55, 49, 19, -1, -1, kBtnEdit, -1, edit_up, edit_down, nullptr, BUTTON_FLAG_NONE);
 
     // DELETE
     blitBufferToBuffer(lbm_buf + 457 * lbmBufWidth + 378, 49, 19, lbmBufWidth, delete_up, 49);
     blitBufferToBuffer(lbm_buf + 351 * lbmBufWidth + 378, 49, 19, lbmBufWidth, delete_down, 49);
-    delete_bid = buttonCreate(tool_win, 378, 77, 49, 19, -1, -1, kBtnDelete, -1, delete_up, delete_down, nullptr, 0);
+    delete_bid = buttonCreate(tool_win, 378, 77, 49, 19, -1, -1, kBtnDelete, -1, delete_up, delete_down, nullptr, BUTTON_FLAG_NONE);
 
     draw_mode = false;
 
@@ -1201,7 +1201,7 @@ void edit_mapper()
 {
     ObjectType currentType = OBJ_TYPE_TILE;
     int scrollOffset = 0;
-    int selectedPid = -1;
+    ProtoId selectedProtoId = ProtoId::Empty();
     int markExitGridMode = 0;
     Object* hl_obj1 = nullptr;
     Object* hl_obj2 = nullptr;
@@ -1275,7 +1275,7 @@ void edit_mapper()
         // (F8, Escape, mouse clicks, keyboard, everything).
         // ----------------------------------------------------------------
 
-        if (gameGetState() == GAME_STATE_5) {
+        if (gameGetState() == GameState::DialogRequested) {
             _gdialogSystemEnter();
         }
 
@@ -1294,19 +1294,19 @@ void edit_mapper()
 
         // ---- Mouse event on hex grid ----
         if (keyCode == -2) {
-            int buttons = mouseGetEvent();
+            MouseButtonEvent buttons = mouseGetEvent();
 
-            if (buttons & MOUSE_EVENT_LEFT_BUTTON_REPEAT) {
+            if ((buttons & MouseButtonEvent::LeftButtonRepeat) != MouseButtonEvent::None) {
                 constexpr int kToolbarReservedHeight = 100;
                 if (_mouse_click_in(0, 16,
                         windowGetWidth(gIsoWindow) - 1,
                         windowGetHeight(gIsoWindow) - 1 - kToolbarReservedHeight)) {
                     if (tool_active != -1) {
-                        if (selectedPid != -1) {
-                            if (objectTypeFromPid(selectedPid) == OBJ_TYPE_TILE) {
-                                placeTile(selectedPid, FrmId(gGameMouseBouncingCursor->fid));
+                        if (selectedProtoId.valid()) {
+                            if (selectedProtoId.objectType() == OBJ_TYPE_TILE) {
+                                placeTile(selectedProtoId, gGameMouseBouncingCursor);
                             } else {
-                                placeObject(selectedPid, FrmId(gGameMouseBouncingCursor->fid));
+                                placeObject(selectedProtoId, gGameMouseBouncingCursor);
                             }
                         }
                     } else if (_screen_obj != nullptr) {
@@ -1321,7 +1321,7 @@ void edit_mapper()
                     }
                 }
 
-            } else if (buttons & MOUSE_EVENT_LEFT_BUTTON_DOWN) {
+            } else if ((buttons & MouseButtonEvent::LeftButtonDown) != MouseButtonEvent::None) {
                 if (_mouse_click_in(0, 16,
                         windowGetWidth(gIsoWindow) - 1,
                         windowGetHeight(gIsoWindow) - 1)) {
@@ -1344,11 +1344,11 @@ void edit_mapper()
                     if (markExitGridMode) {
                         mapper_mark_exit_grid();
                     } else if (tool_active != -1) {
-                        if (selectedPid != -1) {
-                            if (objectTypeFromPid(selectedPid) == OBJ_TYPE_TILE) {
-                                placeTile(selectedPid, FrmId(gGameMouseBouncingCursor->fid));
+                        if (selectedProtoId.valid()) {
+                            if (selectedProtoId.objectType() == OBJ_TYPE_TILE) {
+                                placeTile(selectedProtoId, gGameMouseBouncingCursor);
                             } else {
-                                placeObject(selectedPid, FrmId(gGameMouseBouncingCursor->fid));
+                                placeObject(selectedProtoId, gGameMouseBouncingCursor);
                             }
                         }
                     } else {
@@ -1367,7 +1367,7 @@ void edit_mapper()
                             update_high_obj_name(_screen_obj);
 
                             Object* hlObj;
-                            if (objectCreateWithFrmIdPid(&hlObj, InterfaceFrameId::HexMouseCursor, -1) != -1) {
+                            if (objectCreateWithFrmIdProtoId(&hlObj, InterfaceFrameId::HexMouseCursor, ProtoId::Empty()) != -1) {
                                 hlObj->flags |= OBJECT_SHOOT_THRU | OBJECT_LIGHT_THRU | OBJECT_NO_SAVE;
                                 _obj_toggle_flat(hlObj, nullptr);
 
@@ -1390,11 +1390,11 @@ void edit_mapper()
                 }
             }
 
-            if (buttons & MOUSE_EVENT_RIGHT_BUTTON_DOWN) {
+            if ((buttons & MouseButtonEvent::RightButtonDown) != MouseButtonEvent::None) {
                 // clear toolbar selection
                 if (tool_active != -1) {
                     tool_active = -1;
-                    selectedPid = -1;
+                    selectedProtoId = ProtoId::Empty();
                     draw_mode = false;
                     toolbar_info[currentType].offset = scrollOffset;
                     mapper_destroy_highlight_obj(&hl_obj1, nullptr);
@@ -1443,7 +1443,7 @@ void edit_mapper()
                 if (!map_entered) {
                     if (!settings.mapper.use_art_not_protos) {
                         int slotIndex = keyCode - leftBase;
-                        update_toolname(&selectedPid, currentType, scrollOffset + slotIndex);
+                        update_toolname(selectedProtoId, currentType, scrollOffset + slotIndex);
                     }
                 }
                 continue;
@@ -1459,17 +1459,17 @@ void edit_mapper()
 
                 if (!settings.mapper.use_art_not_protos) {
                     int slotIndex = keyCode - rightBase;
-                    int pid = toolbar_proto(currentType, scrollOffset + slotIndex);
-                    if (pid != -1) {
-                        selectedPid = pid;
+                    const ProtoId protoId = toolbar_proto(currentType, scrollOffset + slotIndex);
+                    if (protoId.valid()) {
+                        selectedProtoId = protoId;
                         tool_active = slotIndex;
                         draw_mode = true;
                         _edit_area = 1;
 
                         // Set mouse cursor to proto's art FID
                         Proto* proto;
-                        if (protoGetProto(pid, &proto) != -1) {
-                            const FrmId artFrmId = FrmId(proto->fid);
+                        if (protoGetProto(protoId, &proto) != -1) {
+                            const FrmId artFrmId = FrmId(proto);
                             if (artFrmId.exist()) {
                                 gGameMouseBouncingCursor->fid = artFrmId.fid();
                                 Rect mouseRect;
@@ -1484,7 +1484,7 @@ void edit_mapper()
                             _screen_obj = nullptr;
                         }
 
-                        update_toolname(&selectedPid, currentType, scrollOffset + slotIndex);
+                        update_toolname(selectedProtoId, currentType, scrollOffset + slotIndex);
 
                         // Refresh toolbar art row
                         Rect artRect = { 121, 1, _scr_size.right - 19, art_scale_height + 1 };
@@ -1657,7 +1657,7 @@ void edit_mapper()
             int val;
             if (win_get_num_i(&val, -2, 255, false, "Exit Grid Dest Map", 100, 100) != -1) mapInfo.map = static_cast<Map>(val);
             if (win_get_num_i(&val, -1, 40000, false, "Exit Grid Dest Tile #", 100, 100) != -1) mapInfo.tile = val;
-            if (win_get_num_i(&val, 0, 3, false, "Exit Grid Dest Elevation", 100, 100) != -1) mapInfo.elevation = val;
+            if (win_get_num_i(&val, ELEVATION_FIRST, ELEVATION_COUNT, false, "Exit Grid Dest Elevation", 100, 100) != -1) mapInfo.elevation = static_cast<MapElevation>(val);
             if (win_get_num_i(&val, ROTATION_FIRST, ROTATION_COUNT, false, "Exit Grid Dest Rotation", 100, 100) != -1) mapInfo.rotation = static_cast<Rotation>(val);
             break;
         }
@@ -1746,11 +1746,11 @@ void edit_mapper()
             break;
         case kBtnSetMapScript: {
             if (map_entered) break;
-            int id = scr_choose(0);
-            if (id == -2) {
+            int sid = scr_choose(SCRIPT_TYPE_SYSTEM);
+            if (sid == -2) {
                 map_set_script(-1);
-            } else if (id >= 0) {
-                map_set_script((id & 0xFFFFFF) + 1);
+            } else if (sid >= 0) {
+                map_set_script(scriptIdFromSid(sid) + 1);
             }
             break;
         }
@@ -1874,9 +1874,9 @@ void edit_mapper()
         case kBtnProtoEditor:
             // Uppercase 'E' — proto editor on current toolbar selection
             if (!map_entered && !settings.mapper.use_art_not_protos && !draw_mode && tool_active != -1) {
-                int pid = toolbar_proto(currentType, scrollOffset + tool_active);
-                if (pid != -1) {
-                    protoEdit(pid);
+                const ProtoId protoId = toolbar_proto(currentType, scrollOffset + tool_active);
+                if (protoId.valid()) {
+                    protoEdit(protoId);
                 }
             }
             break;
@@ -1913,7 +1913,7 @@ void edit_mapper()
                 } else if (_screen_obj != nullptr) {
                     int protoOffset;
                     if (mapperPickObject(_screen_obj, &protoOffset) != -1) {
-                        ObjectType objType = objectTypeFromPid(_screen_obj->pid);
+                        ObjectType objType = ProtoId(_screen_obj).objectType();
                         currentType = objType;
                         scrollOffset = protoOffset;
                         toolbarSetObjectType(currentType, currentType, scrollOffset, &hl_obj1);
@@ -1997,7 +1997,7 @@ void edit_mapper()
 
         // --- 'k' — Kill critter ---
         case kBtnKill:
-            if (!map_entered && _screen_obj != nullptr && objectTypeFromPid(_screen_obj->pid) == OBJ_TYPE_CRITTER) {
+            if (!map_entered && ProtoId(_screen_obj).objectType() == OBJ_TYPE_CRITTER) {
                 critterKill(_screen_obj, ANIM_FALL_FRONT_BLOOD_SF, true);
             }
             break;
@@ -2019,11 +2019,11 @@ void edit_mapper()
         // --- ':' — Edit proto from toolbar slot ---
         case kBtnProtoNewEdit:
             if (!map_entered && !settings.mapper.use_art_not_protos && tool_active != -1) {
-                int pid = toolbar_proto(currentType, scrollOffset + tool_active);
-                if (pid == -1) {
-                    proto_new(&pid, currentType);
+                ProtoId protoId = toolbar_proto(currentType, scrollOffset + tool_active);
+                if (!protoId.valid()) {
+                    proto_new(protoId, currentType);
                 }
-                protoEdit(pid);
+                protoEdit(protoId);
             }
             break;
 
@@ -2339,24 +2339,24 @@ void clear_toolname()
 }
 
 // 0x48B328
-void update_toolname(int* pid, ObjectType type, int id)
+void update_toolname(ProtoId& protoId, ObjectType type, int id)
 {
     Proto* proto;
 
-    *pid = toolbar_proto(type, id);
+    protoId = toolbar_proto(type, id);
 
-    if (protoGetProto(*pid, &proto) == -1) {
+    if (protoGetProto(protoId, &proto) == -1) {
         return;
     }
 
     windowDrawText(tool_win,
-        protoGetName(proto->pid),
+        protoGetName(proto),
         kToolNameWidth,
         kToolNameX,
         kToolNameY1,
         static_cast<ColorWithFlags>(260));
 
-    switch (objectTypeFromPid(proto->pid)) {
+    switch (protoId.objectType()) {
     case OBJ_TYPE_ITEM:
         windowDrawText(tool_win,
             gItemTypeNames[proto->item.type],
@@ -2422,8 +2422,8 @@ void update_high_obj_name(Object* obj)
 {
     Proto* proto;
 
-    if (protoGetProto(obj->pid, &proto) != -1) {
-        windowDrawText(tool_win, protoGetName(obj->pid), kToolNameWidth, kToolNameX, kToolNameY1, static_cast<ColorWithFlags>(260));
+    if (protoGetProto(obj, &proto) != -1) {
+        windowDrawText(tool_win, protoGetName(obj), kToolNameWidth, kToolNameX, kToolNameY1, static_cast<ColorWithFlags>(260));
         windowDrawText(tool_win, "", kToolNameWidth, kToolNameX, kToolNameY2, static_cast<ColorWithFlags>(260));
         windowDrawText(tool_win, "", kToolNameWidth, kToolNameX, kToolNameY3, static_cast<ColorWithFlags>(260));
         redraw_toolname();
@@ -2434,7 +2434,7 @@ void update_high_obj_name(Object* obj)
 void mapper_destroy_highlight_obj(Object** a1, Object** a2)
 {
     Rect rect;
-    int elevation;
+    MapElevation elevation;
 
     if (a2 != nullptr && *a2 != nullptr) {
         elevation = (*a2)->elevation;
@@ -2528,9 +2528,9 @@ void update_art(ObjectType type, int offset)
             frmId = FrmId(type, i);
         } else {
             Proto* proto;
-            int pid = toolbar_proto(type, i);
-            if (protoGetProto(pid, &proto) == -1) continue;
-            frmId = FrmId(proto->fid);
+            const ProtoId protoId = toolbar_proto(type, i);
+            if (protoGetProto(protoId, &proto) == -1) continue;
+            frmId = FrmId(proto);
         }
         artRender(frmId, p, art_scale_width, art_scale_height, screen_width);
     }
@@ -2561,21 +2561,46 @@ void update_art(ObjectType type, int offset)
 // mapper_pick_object
 static int mapperPickObject(Object* obj, int* outOffset)
 {
-    if (obj == nullptr) {
+    const ProtoId objProtoId = obj;
+    if (!objProtoId.valid()) {
         return -1;
     }
 
-    ObjectType type = objectTypeFromPid(obj->pid);
+    ObjectType type = objProtoId.objectType();
     int maxId = proto_max_id(type);
     constexpr int kScrollOffset = 10;
 
     for (int idx = 1; idx < maxId; idx++) {
-        int pid = (type << 24) | idx;
+        ProtoId protoId;
+        switch (type) {
+        case OBJ_TYPE_ITEM:
+            protoId = static_cast<ItemProtoTypeId>(idx);
+            break;
+        case OBJ_TYPE_CRITTER:
+            protoId = static_cast<CritterProtoTypeId>(idx);
+            break;
+        case OBJ_TYPE_SCENERY:
+            protoId = static_cast<SceneryProtoTypeId>(idx);
+            break;
+        case OBJ_TYPE_WALL:
+            protoId = static_cast<WallProtoTypeId>(idx);
+            break;
+        case OBJ_TYPE_TILE:
+            protoId = static_cast<TileProtoTypeId>(idx);
+            break;
+        case OBJ_TYPE_MISC:
+            protoId = static_cast<MiscProtoTypeId>(idx);
+            break;
+        default:
+            protoId = ProtoId::Empty();
+            break;
+        }
+
         Proto* proto;
-        if (protoGetProto(pid, &proto) == -1) {
+        if (protoGetProto(protoId, &proto) == -1) {
             return -1;
         }
-        if (proto->pid == obj->pid) {
+        if (ProtoId(proto) == ProtoId(obj)) {
             *outOffset = std::min(idx, maxId - kScrollOffset);
             return 0;
         }
@@ -2598,22 +2623,25 @@ static int mapperPickTile(int* outOffset)
         return 0;
     }
 
-    int packedTile = _square[gElevation]->fid[tileNum];
-    TileFrameId tileFrmId;
+    int tileFid = _square[gElevation]->tileFid[tileNum];
+    TileFrameId tileFrameId;
     if (tileRoofIsVisible()) {
-        tileFrmId = static_cast<TileFrameId>(frameIdFromFid(packedTile >> 16));
+        tileFrameId = RoofTileFrmId(tileFid).frameId<TileFrameId>();
     } else {
-        tileFrmId = static_cast<TileFrameId>(frameIdFromFid(packedTile));
+        tileFrameId = FloorTileFrmId(tileFid).frameId<TileFrameId>();
     }
-    const TileFrmId artFrmId = tileFrmId;
+    if (tileFrameId == TileFrameId::Invalid) {
+        tileFrameId = TileFrameId::Last;
+    }
+    const TileFrmId tileFrmId = tileFrameId;
 
     for (int idx = 0; idx < maxId; idx++) {
-        int pid = (OBJ_TYPE_TILE << 24) | idx;
+        const ProtoId protoId = static_cast<TileProtoTypeId>(idx);
         Proto* proto;
-        if (protoGetProto(pid, &proto) == -1) {
+        if (protoGetProto(protoId, &proto) == -1) {
             return -1;
         }
-        if (proto->fid == artFrmId.fid()) {
+        if (proto->fid == tileFrmId.fid()) {
             *outOffset = std::min(idx, maxId - kScrollOffset);
             return 0;
         }
@@ -2673,7 +2701,7 @@ int mapper_inven_unwield(Object* obj, int right_hand)
 
     animationRegisterAnimate(obj, ANIM_PUT_AWAY, 0);
 
-    const FrmId frmId = FrmId(obj, ANIM_STAND, WEAPON_ANIMATION_NONE, rotationFromFid(obj->fid));
+    const FrmId frmId = FrmId(obj, ANIM_STAND, WeaponAnimation::None);
     animationRegisterSetFrmId(obj, frmId, 0);
 
     return reg_anim_end();
@@ -2693,7 +2721,7 @@ int mapper_mark_exit_grid()
 
             obj = objectFindFirstAtElevation(gElevation);
             while (obj != nullptr) {
-                if (isExitGridPid(obj->pid)) {
+                if (isExitGridProtoId(obj)) {
                     obj->data.misc.map = mapInfo.map;
                     obj->data.misc.tile = mapInfo.tile;
                     obj->data.misc.elevation = mapInfo.elevation;
@@ -2763,7 +2791,7 @@ static void mapper_enter_play_mode(Object** pHlObj1)
 
     _proto_dude_init("premade\\blank.gcd");
 
-    gDude->fid = FrmId(_art_vault_guy_num, ANIM_STAND, WEAPON_ANIMATION_NONE, ROTATION_NE).fid();
+    gDude->fid = FrmId(_art_vault_guy_num, ANIM_STAND, WeaponAnimation::None, ROTATION_NE).fid();
 
     _scr_game_init();
 
@@ -2872,7 +2900,7 @@ static void mapper_mark_all_exit_grids()
 
     obj = objectFindFirstAtElevation(gElevation);
     while (obj != nullptr) {
-        if (isExitGridPid(obj->pid)) {
+        if (isExitGridProtoId(obj)) {
             obj->data.misc.map = mapInfo.map;
             obj->data.misc.tile = mapInfo.tile;
             obj->data.misc.elevation = mapInfo.elevation;

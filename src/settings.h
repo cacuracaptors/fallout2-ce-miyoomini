@@ -1,13 +1,77 @@
 #ifndef FALLOUT_SETTINGS_H_
 #define FALLOUT_SETTINGS_H_
 
+#include <optional>
 #include <string>
+#include <variant>
+#include <vector>
 
 #include "character_editor.h"
 #include "game_config.h"
 #include "svga.h"
 
 namespace fallout {
+
+enum class SettingValueType {
+    Boolean,
+    Integer,
+    Real,
+    Text,
+    Choice,
+    KeyBinding,
+};
+
+// WIP
+enum class SettingCategory {
+    Uncategorized,
+    System,
+    Screen,
+    Interface,
+    Gameplay,
+    Preferences,
+    Audio,
+    Debug,
+    CombatAi,
+    QualityOfLife,
+    Mapper,
+};
+
+enum class SettingApplyPolicy {
+    OnClose,
+    NextGame,
+    Restart,
+};
+
+using SettingValue = std::variant<bool, int, double, std::string>;
+
+struct SettingChoice {
+    int value;
+    std::string fallbackLabel;
+};
+
+struct SettingDescriptor {
+    std::string id;
+    std::string source = "fallout2.cfg";
+    std::string section;
+    std::string key;
+    SettingValueType valueType = SettingValueType::Boolean;
+    SettingCategory category = SettingCategory::Uncategorized;
+    SettingApplyPolicy applyPolicy = SettingApplyPolicy::Restart;
+    SettingValue defaultValue;
+    bool readOnly = false;
+    bool sensitive = false;
+    bool applicable = true;
+    bool commandLineOverride = false;
+    int categoryOrder = 0;
+    std::string subsection;
+    int labelMessageId = -1;
+    int descriptionMessageId = -1;
+    std::string fallbackLabel;
+    std::string fallbackDescription;
+    std::string asset;
+    std::vector<SettingChoice> choices;
+    std::optional<SettingValue> vanillaValue;
+};
 
 struct SystemSettings {
     std::string executable = "game";
@@ -49,11 +113,12 @@ struct UISettings {
     // Show the Help option in the in-game options menu.
     bool in_game_menu_help = true;
 
+    // Whether to keep the main menu visible behind 640x480 main-menu subwindows
+    // like load, options, and new game when the effective menu background is larger.
+    bool main_menu_overlay_subscreens = false;
+
     // Should the game window stretch all the way to the bottom or sit at the top of the interface bar (default).
     bool iface_bar_mode = false;
-
-    // Draw progress bar for perk ranks.
-    bool perks_progress_bar = false;
 
     // This will increase the width of the interface bar expanding the area used to display text.
     int iface_bar_width = 800;
@@ -65,6 +130,9 @@ struct UISettings {
 
     // Iface-bar side graphics extend from the Screen edges to the Iface-Bar if true (otherwise from bar to edges).
     bool iface_bar_sides_ori = false;
+
+    // Draw progress bar for perk ranks.
+    bool perks_progress_bar = false;
 
     // 0 - vanilla ammo lights, 1 - alternate ammo meter with burst segments, 2 - also segment low-capacity single-shot weapons.
     int alternate_ammo_meter = 0;
@@ -107,6 +175,7 @@ struct UISettings {
     bool display_karma_changes = false;
     bool display_bonus_damage = false;
     bool numbers_in_dialogue = false;
+    bool party_member_extra_info = false;
 
     // Whether to use high resolution art for dialog borders.
     bool dialog_border = true;
@@ -133,10 +202,10 @@ struct GameplaySettings {
 };
 
 struct PreferencesSettings {
-    int game_difficulty = GAME_DIFFICULTY_NORMAL;
-    int combat_difficulty = COMBAT_DIFFICULTY_NORMAL;
-    int violence_level = VIOLENCE_LEVEL_MAXIMUM_BLOOD;
-    int target_highlight = TARGET_HIGHLIGHT_TARGETING_ONLY;
+    GameDifficulty game_difficulty = GAME_DIFFICULTY_NORMAL;
+    CombatDifficulty combat_difficulty = COMBAT_DIFFICULTY_NORMAL;
+    ViolenceLevel violence_level = VIOLENCE_LEVEL_MAXIMUM_BLOOD;
+    TargetHighlight target_highlight = TARGET_HIGHLIGHT_TARGETING_ONLY;
     bool item_highlight = true;
     bool combat_looks = false;
     bool combat_messages = true;
@@ -160,14 +229,29 @@ struct SoundSettings {
     bool sounds = true;
     bool music = true;
     bool speech = true;
+    // Voiced floats and Pip-Boy lines, only when [speech] is on too.
+    bool float_speech = true;
+    bool pipboy_speech = true;
     int master_volume = 22281;
     int music_volume = 22281;
     int sndfx_volume = 22281;
     int speech_volume = 22281;
+    // TODO: Separate volumes for voiced floats and Pip-Boy lines, once they
+    // have a place in the preferences screen. Both use speech_volume for now.
+    // int float_volume = 22281;
+    // int pipboy_volume = 22281;
     int cache_size = 448;
     std::string music_path1 = "sound\\music\\";
     std::string music_path2 = "sound\\music\\";
     int gapless_music = 1;
+    // Audio channel pools, see audio_channels.h for limits.
+    int music_channels = 1;
+    int speech_channels = 1;
+    int sfx_channels = 4;
+    int movie_channels = 1;
+    int script_channels = 4;
+    int float_channels = 4;
+    int pipboy_channels = 1;
 };
 
 struct DebugSettings {
@@ -182,12 +266,19 @@ struct DebugSettings {
     std::string console_output_path;
 };
 
+struct CombatAiSettings {
+    // Sfall NPCsTryToSpendExtraAP: minimum remaining AP for an AI retry; 0 disables.
+    int npcs_try_to_spend_extra_ap = 0;
+};
+
 struct QolSettings {
     int use_walk_distance = 3;
+    bool walk_when_sneaking = false;
     bool auto_open_doors = false;
     bool party_trade_from_menu = true;
     bool party_loot_and_barter = false;
     bool fast_ammo_load = true;
+    bool move_landing_marker = true;
 };
 
 struct MapperSettings {
@@ -218,6 +309,7 @@ struct Settings {
     PreferencesSettings preferences;
     SoundSettings sound;
     DebugSettings debug;
+    CombatAiSettings combat_ai;
     QolSettings qol;
     MapperSettings mapper;
 };
@@ -228,6 +320,14 @@ bool settingsInit(bool isMapper, int argc, char** argv);
 bool settingsSave();
 void settingsWriteToConfig(bool onlyAdd = false);
 bool settingsExit(bool shouldSave);
+void settingsMarkCommandLineOverride(const char* section, const char* key);
+const std::vector<SettingDescriptor>& settingsGetDescriptors();
+SettingValue settingsGetValue(const SettingDescriptor& descriptor);
+// Includes committed restart-required edits without changing the active runtime value.
+SettingValue settingsGetConfiguredValue(const SettingDescriptor& descriptor);
+bool settingsValidateValue(const SettingDescriptor& descriptor, const SettingValue& value, std::string* error = nullptr);
+// Honors applyPolicy. NextGame is rejected until a game lifecycle apply path exists.
+bool settingsSetValue(const SettingDescriptor& descriptor, const SettingValue& value, std::string* error = nullptr);
 
 } // namespace fallout
 

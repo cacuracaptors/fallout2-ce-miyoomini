@@ -18,6 +18,7 @@
 #include "game_sound.h"
 #include "input.h"
 #include "kb.h"
+#include "mainmenu.h"
 #include "memory.h"
 #include "message.h"
 #include "mouse.h"
@@ -29,6 +30,7 @@
 #include "settings.h"
 #include "skill.h"
 #include "stat.h"
+#include "string_utils.h"
 #include "svga.h"
 #include "text_font.h"
 #include "trait.h"
@@ -175,8 +177,7 @@ int characterSelectorOpen()
         mouseShowCursor();
     }
 
-    colorPaletteLoad("color.pal");
-    paletteFadeTo(_cmap);
+    mainMenuShowSubscreen(true);
 
     int rc = 0;
     bool done = false;
@@ -262,7 +263,11 @@ int characterSelectorOpen()
         sharedFpsLimiter.throttle();
     }
 
-    paletteFadeTo(gPaletteBlack);
+    if (rc == 2) {
+        mainMenuFadeOutForGameStart(true);
+    } else {
+        mainMenuFadeOutForMenuReturn(true);
+    }
     characterSelectorWindowFree();
 
     if (cursorWasHidden) {
@@ -284,7 +289,8 @@ static bool characterSelectorWindowInit()
 
     int characterSelectorWindowX = (screenGetWidth() - CS_WINDOW_WIDTH) / 2;
     int characterSelectorWindowY = (screenGetHeight() - CS_WINDOW_HEIGHT) / 2;
-    gCharacterSelectorWindow = windowCreate(characterSelectorWindowX, characterSelectorWindowY, CS_WINDOW_WIDTH, CS_WINDOW_HEIGHT, COLOR_BLACK, 0);
+    WindowFlags characterSelectorWindowFlags = mainMenuSubscreenWindowFlags(WINDOW_NONE, WINDOW_MODAL | WINDOW_MOVE_ON_TOP);
+    gCharacterSelectorWindow = windowCreate(characterSelectorWindowX, characterSelectorWindowY, CS_WINDOW_WIDTH, CS_WINDOW_HEIGHT, _colorTable[0], characterSelectorWindowFlags);
     if (gCharacterSelectorWindow == -1) {
         return characterSelectorWindowFatalError(false);
     }
@@ -340,7 +346,7 @@ static bool characterSelectorWindowInit()
         _previousButtonNormalFrmImage.getData(),
         _previousButtonPressedFrmImage.getData(),
         nullptr,
-        0);
+        BUTTON_FLAG_NONE);
     if (gCharacterSelectorWindowPreviousButton == -1) {
         return characterSelectorWindowFatalError(false);
     }
@@ -368,7 +374,7 @@ static bool characterSelectorWindowInit()
         _nextButtonNormalFrmImage.getData(),
         _nextButtonPressedFrmImage.getData(),
         nullptr,
-        0);
+        BUTTON_FLAG_NONE);
     if (gCharacterSelectorWindowNextButton == -1) {
         return characterSelectorWindowFatalError(false);
     }
@@ -632,7 +638,7 @@ static bool characterSelectorWindowRenderStats()
 
     // NAME
     str = objectGetName(gDude);
-    strcpy(text, str);
+    stringCopy(text, str);
 
     length = fontGetStringWidth(text);
     fontDrawText(gCharacterSelectorWindowBuffer + CS_WINDOW_WIDTH * y + CS_WINDOW_NAME_MID_X - (length / 2), text, 160, CS_WINDOW_WIDTH, COLOR_GREEN);
@@ -764,7 +770,7 @@ static bool characterSelectorWindowRenderStats()
     messageListItem.num = 16;
     text[0] = '\0';
     if (messageListGetItem(&gMiscMessageList, &messageListItem)) {
-        strcpy(text, messageListItem.text);
+        stringCopy(text, messageListItem.text);
     }
 
     length = fontGetStringWidth(text);
@@ -780,7 +786,7 @@ static bool characterSelectorWindowRenderStats()
     y += vh;
 
     str = statGetName(STAT_ARMOR_CLASS);
-    strcpy(text, str);
+    stringCopy(text, str);
 
     length = fontGetStringWidth(text);
     fontDrawText(gCharacterSelectorWindowBuffer + CS_WINDOW_WIDTH * y + CS_WINDOW_SECONDARY_STAT_MID_X - length, text, length, CS_WINDOW_WIDTH, COLOR_GREEN);
@@ -797,7 +803,7 @@ static bool characterSelectorWindowRenderStats()
     messageListItem.num = 15;
     text[0] = '\0';
     if (messageListGetItem(&gMiscMessageList, &messageListItem)) {
-        strcpy(text, messageListItem.text);
+        stringCopy(text, messageListItem.text);
     }
 
     length = fontGetStringWidth(text);
@@ -813,7 +819,7 @@ static bool characterSelectorWindowRenderStats()
     y += vh;
 
     str = statGetName(STAT_MELEE_DAMAGE);
-    strcpy(text, str);
+    stringCopy(text, str);
 
     length = fontGetStringWidth(text);
     fontDrawText(gCharacterSelectorWindowBuffer + CS_WINDOW_WIDTH * y + CS_WINDOW_SECONDARY_STAT_MID_X - length, text, length, CS_WINDOW_WIDTH, COLOR_GREEN);
@@ -834,7 +840,7 @@ static bool characterSelectorWindowRenderStats()
         y += vh;
 
         str = skillGetName(skills[index]);
-        strcpy(text, str);
+        stringCopy(text, str);
 
         length = fontGetStringWidth(text);
         fontDrawText(gCharacterSelectorWindowBuffer + CS_WINDOW_WIDTH * y + CS_WINDOW_SECONDARY_STAT_MID_X - length, text, length, CS_WINDOW_WIDTH, COLOR_GREEN);
@@ -855,7 +861,7 @@ static bool characterSelectorWindowRenderStats()
         if (str == nullptr) {
             continue;
         }
-        strcpy(text, str);
+        stringCopy(text, str);
 
         y += vh;
 

@@ -20,6 +20,7 @@
 #include "text_font.h"
 #include "tile.h"
 #include "win32.h"
+#include "window_manager.h"
 #include "window_manager_private.h"
 
 namespace fallout {
@@ -293,9 +294,16 @@ int _GNW95_init_window(int width, int height, WindowMode mode, int scale)
             windowFlags |= SDL_WINDOW_FULLSCREEN;
         } else if (mode == WindowMode::WindowedFullscreen) {
             windowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+
+            // Prevent SDL from minimizing the window when it loses focus.
+            // Without this, SDL_WINDOW_FULLSCREEN_DESKTOP on Linux with
+            // NVIDIA multi-monitor setups deactivates secondary displays
+            // or triggers X11 BadRRCrtc errors.
+            SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");
         }
 
         gSdlWindow = SDL_CreateWindow(gProgramWindowTitle, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width * scale, height * scale, windowFlags);
+
         if (gSdlWindow == nullptr) {
             return -1;
         }
@@ -550,7 +558,10 @@ void handleWindowSizeChanged()
 {
     movieHandleRendererReset();
     destroyRenderer();
-    createRenderer(screenGetWidth(), screenGetHeight());
+    if (createRenderer(screenGetWidth(), screenGetHeight())) {
+        // Repaint the newly created texture surface, just as on a window expose.
+        windowRefreshAll(&_scr_size);
+    }
     mouseDeviceRefreshWindowMapping();
 
     // Miyoo Mini: the new texture starts black; copy the current screen into

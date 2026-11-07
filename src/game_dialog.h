@@ -16,6 +16,7 @@ int gameDialogInit();
 int gameDialogReset();
 int gameDialogExit();
 bool _gdialogActive();
+bool gameDialogWindowActive();
 void gameDialogEnter(Object* speaker, int mode);
 void _gdialogSystemEnter();
 void gameDialogStartLips(const char* audioFileName);
@@ -43,7 +44,7 @@ void gameDialogEndBarter();
 bool gameDialogIsBarterWindowExpanded();
 int gameDialogGetWindow();
 int gameDialogGetBackgroundWindow();
-void gameDialogSetPartyMemberCcMsgIds(int pid, int startMsgId, int endMsgId);
+void gameDialogSetPartyMemberCcMsgIds(const ProtoId& protoId, int startMsgId, int endMsgId);
 void gameDialogResetPartyMemberCcMsgIds();
 
 } // namespace fallout

@@ -226,7 +226,7 @@ int     arg5 - the parameter of this call (fixed_param), useful for combat_proc
 
 int     ret0 - pass -1 to cancel the execution of the handler
 */
-bool scriptHooks_StdProcedure(int procedureNumber, Object* self, Object* source, Object* target, int fixedParam, bool after)
+bool scriptHooks_StdProcedure(ScriptProc procedureNumber, Object* self, Object* source, Object* target, int fixedParam, bool after)
 {
     if (procedureNumber == SCRIPT_PROC_START
         || procedureNumber == SCRIPT_PROC_CRITTER
@@ -274,7 +274,7 @@ Runs once every time when the game mode was changed, like opening/closing the in
 int arg0 - event type: 1 - when the player exits the game, 0 - otherwise
 int arg1 - the previous game mode
 */
-void scriptHooks_GameModeChange(int exit, int previousGameMode)
+void scriptHooks_GameModeChange(int exit, GameMode::Flags previousGameMode)
 {
     ScriptHookCall(HOOK_GAMEMODECHANGE, 0, { exit, previousGameMode }).call();
 }
@@ -336,9 +336,9 @@ int scriptHooks_ExplosiveTimer(Object* explosive, int delay, EventType eventType
     assert(delay >= 0);
     assert(eventType == EVENT_TYPE_EXPLOSION || eventType == EVENT_TYPE_EXPLOSION_FAILURE);
 
-    int hookResult = eventType == EVENT_TYPE_EXPLOSION_FAILURE ? ROLL_FAILURE : ROLL_SUCCESS;
+    Roll hookResult = eventType == EVENT_TYPE_EXPLOSION_FAILURE ? Roll::Failure : Roll::Success;
 
-    ScriptHookCall hook(HOOK_EXPLOSIVETIMER, 2, { delay, explosive, hookResult });
+    ScriptHookCall hook(HOOK_EXPLOSIVETIMER, 2, { delay, explosive, static_cast<int>(hookResult) });
     hook.call();
 
     if (hook.numReturnValues() <= 0) {
@@ -352,10 +352,10 @@ int scriptHooks_ExplosiveTimer(Object* explosive, int delay, EventType eventType
 
     delay = std::min(overrideDelay, 18000);
     if (hook.numReturnValues() > 1) {
-        int overrideResult = hook.getReturnValueAt(1).asInt();
-        if (overrideResult >= ROLL_CRITICAL_FAILURE && overrideResult <= ROLL_FAILURE) {
+        Roll overrideResult = static_cast<Roll>(hook.getReturnValueAt(1).asInt());
+        if (rollIsFailure(overrideResult)) {
             eventType = EVENT_TYPE_EXPLOSION_FAILURE;
-        } else if (overrideResult >= ROLL_SUCCESS && overrideResult <= ROLL_CRITICAL_SUCCESS) {
+        } else if (rollIsSuccess(overrideResult)) {
             eventType = EVENT_TYPE_EXPLOSION;
         }
     }
@@ -767,11 +767,11 @@ int     ret0 - Override the hit/miss
 int     ret1 - Override the targeted bodypart
 Critter ret2 - Override the target of the attack
 */
-int scriptHooks_AfterHitRoll(Object* attacker, Object** defenderPtr, HitLocation* hitLocationPtr, int hitChance, int roll)
+Roll scriptHooks_AfterHitRoll(Object* attacker, Object** defenderPtr, HitLocation* hitLocationPtr, int hitChance, Roll roll)
 {
     assert(defenderPtr != nullptr && hitLocationPtr != nullptr);
 
-    ScriptHookCall hook(HOOK_AFTERHITROLL, 3, { roll, attacker, *defenderPtr, *hitLocationPtr, hitChance });
+    ScriptHookCall hook(HOOK_AFTERHITROLL, 3, { static_cast<int>(roll), attacker, *defenderPtr, *hitLocationPtr, hitChance });
     hook.call();
 
     if (hook.numReturnValues() <= 0) {
@@ -779,8 +779,8 @@ int scriptHooks_AfterHitRoll(Object* attacker, Object** defenderPtr, HitLocation
     }
 
     int rollOverride = hook.getReturnValueAt(0).asInt();
-    if (rollOverride >= ROLL_CRITICAL_FAILURE && rollOverride <= ROLL_CRITICAL_SUCCESS) {
-        roll = rollOverride;
+    if (rollIsValid(rollOverride)) {
+        roll = static_cast<Roll>(rollOverride);
     } else {
         debugPrint("HOOK_AFTERHITROLL: ignoring invalid roll override %d", rollOverride);
     }
@@ -994,6 +994,26 @@ AnimationType scriptHooks_UseAnimObj(Object* user, Object* target, AnimationType
 }
 
 /*
+Runs when a critter's radiation level is changed.
+
+Critter arg0 - The critter (usually dude_obj)
+int     arg1 - The amount of radiation being added/removed
+
+int     ret0 - The new amount of radiation being added/removed
+*/
+int scriptHooks_AdjustRads(Object* critter, int amount)
+{
+    ScriptHookCall hook(HOOK_ADJUSTRADS, 1, { critter, amount });
+    hook.call();
+
+    if (hook.numReturnValues() > 0) {
+        amount = hook.getReturnValueAt(0).asInt();
+    }
+
+    return amount;
+}
+
+/*
 Runs when an object is removed from a container or critter's inventory for any reason.
 
 Obj     arg0 - the owner that the object is being removed from
@@ -1076,6 +1096,11 @@ void scriptHooks_ComputeDamage(Attack* attack, int numRounds, int baseDmgMult)
 
     if (numRets > 4) {
         attack->defenderKnockback = hook.getReturnValueAt(4).asInt();
+    }
+
+    // SFALL: Fix zero damage instadeath criticals
+    if ((attack->defenderFlags & DAM_DEAD) != DAM_NONE && attack->defenderDamage <= 0) {
+        attack->defenderDamage = 1;
     }
 }
 

@@ -16,6 +16,7 @@
 #include "memory.h"
 #include "miyoo_shutdown.h"
 #include "mouse.h"
+#include "movie.h"
 #include "sfall_kb_helpers.h"
 #include "sfall_script_hooks.h"
 #include "svga.h"
@@ -357,7 +358,7 @@ int inputGetInput()
     _process_bk();
 
     v3 = dequeueInputEvent();
-    if (v3 == -1 && mouseGetEvent() & 0x33) {
+    if (v3 == -1 && (mouseGetEvent() & (MouseButtonEvent::AnyButtonDown | MouseButtonEvent::AnyButtonUp)) != MouseButtonEvent::None) {
         mouseGetPosition(&_input_mx, &_input_my);
         return -2;
     } else {
@@ -1464,6 +1465,7 @@ void _GNW95_process_message()
                 break;
             case SDL_WINDOWEVENT_FOCUS_GAINED:
                 gProgramIsActive = true;
+                movieHandleFocusGained();
                 if (!mouseDeviceInitMode()) {
                     debugPrint("Failed to initialize mouse mode on focus gained: %s\n", SDL_GetError());
                 }

@@ -21,6 +21,7 @@
 #include "game_sound.h"
 #include "geometry.h"
 #include "interface.h"
+#include "inventory.h"
 #include "item.h"
 #include "map.h"
 #include "memory.h"
@@ -117,7 +118,7 @@ static bool actionRegisterUseAnimObj(Object* user, Object* targetObj, AnimationT
     }
 
     if (hookAnim != originalAnim) {
-        const FrmId frmId = FrmId(user, hookAnim, weaponAnimationFromFid(user->fid), user->rotation + 1);
+        const FrmId frmId = FrmId(user, hookAnim, user->rotation + 1);
         if (!frmId.exist()) {
             hookAnim = originalAnim;
         }
@@ -132,12 +133,12 @@ static bool actionRegisterUseAnimObj(Object* user, Object* targetObj, AnimationT
 // 0x410468
 int actionKnockdown(Object* obj, AnimationType* anim, int maxDistance, Rotation rotation, int delay)
 {
-    if (critterFlagCheck(obj->pid, CRITTER_NO_KNOCKBACK)) {
+    if (critterFlagCheck(obj, CRITTER_NO_KNOCKBACK)) {
         return -1;
     }
 
     if (*anim == ANIM_FALL_FRONT) {
-        const FrmId frmId = FrmId(obj, *anim, weaponAnimationFromFid(obj->fid), obj->rotation + 1);
+        const FrmId frmId = FrmId(obj, *anim, obj->rotation + 1);
         if (!frmId.exist()) {
             *anim = ANIM_FALL_BACK;
         }
@@ -167,7 +168,7 @@ int actionKnockdown(Object* obj, AnimationType* anim, int maxDistance, Rotation 
         }
     }
 
-    const char* soundEffectName = sfxBuildCharName(obj, *anim, CHARACTER_SOUND_EFFECT_KNOCKDOWN);
+    const char* soundEffectName = sfxBuildCharName(obj, *anim, CharacterSoundEffect::KnockDown);
     animationRegisterPlaySoundEffect(obj, soundEffectName, delay);
 
     // TODO: Check, probably step back because we've started with 1?
@@ -202,7 +203,7 @@ AnimationType actionBlood(Object* obj, AnimationType anim, int delay)
         return anim;
     }
 
-    const FrmId frmId = FrmId(obj, bloodyAnim, weaponAnimationFromFid(obj->fid), obj->rotation + 1);
+    const FrmId frmId = FrmId(obj, bloodyAnim, obj->rotation + 1);
     if (frmId.exist()) {
         animationRegisterAnimate(obj, bloodyAnim, delay);
     } else {
@@ -215,13 +216,13 @@ AnimationType actionBlood(Object* obj, AnimationType anim, int delay)
 // 0x41060C pick_death
 AnimationType pickDeathAnim(Object* attacker, Object* defender, Object* weapon, int damage, AnimationType attackerAnimation, bool hitFromFront)
 {
-    if (FrmId(attacker->fid) == MiscFrameId::RocketExplosion) {
+    if (FrmId(attacker) == MiscFrameId::RocketExplosion) {
         return checkDeathAnim(defender, ANIM_EXPLODED_TO_NOTHING, VIOLENCE_LEVEL_MAXIMUM_BLOOD, hitFromFront);
     }
-    if (attacker->pid == PROTO_ID_FORCE_FIELD_NS) { // Forcefield North/South
+    if (ProtoId(attacker) == SceneryProtoTypeId::ForceFieldNorthSouth) {
         return checkDeathAnim(defender, ANIM_ELECTRIFIED_TO_NOTHING, VIOLENCE_LEVEL_MAXIMUM_BLOOD, hitFromFront);
     }
-    if (FrmId(attacker->fid) == SceneryFrameId::ForceField3) {
+    if (FrmId(attacker) == SceneryFrameId::ForceField3) {
         return checkDeathAnim(defender, attackerAnimation, VIOLENCE_LEVEL_MAXIMUM_BLOOD, hitFromFront);
     }
 
@@ -230,7 +231,7 @@ AnimationType pickDeathAnim(Object* attacker, Object* defender, Object* weapon, 
 
     DamageType damageType = weaponGetDamageType(attacker, weapon);
 
-    if (weapon != nullptr && weapon->pid == PROTO_ID_MOLOTOV_COCKTAIL) {
+    if (ProtoId(weapon) == ItemProtoTypeId::MolotovCocktail) {
         normalViolenceLevelDamageThreshold = 5;
         maximumBloodViolenceLevelDamageThreshold = 15;
         damageType = DAMAGE_TYPE_FIRE;
@@ -249,7 +250,7 @@ AnimationType pickDeathAnim(Object* attacker, Object* defender, Object* weapon, 
 
     int violenceLevel = settings.preferences.violence_level;
 
-    if (critterFlagCheck(defender->pid, CRITTER_SPECIAL_DEATH)) {
+    if (critterFlagCheck(defender, CRITTER_SPECIAL_DEATH)) {
         return checkDeathAnim(defender, ANIM_EXPLODED_TO_NOTHING, VIOLENCE_LEVEL_NORMAL, hitFromFront);
     }
 
@@ -308,7 +309,7 @@ AnimationType checkDeathAnim(Object* obj, AnimationType anim, int minViolenceLev
     FrmId frmId;
 
     if (settings.preferences.violence_level >= minViolenceLevel) {
-        frmId = FrmId(obj, anim, weaponAnimationFromFid(obj->fid), obj->rotation + 1);
+        frmId = FrmId(obj, anim, obj->rotation + 1);
         if (frmId.exist()) {
             return anim;
         }
@@ -318,7 +319,7 @@ AnimationType checkDeathAnim(Object* obj, AnimationType anim, int minViolenceLev
         return ANIM_FALL_BACK;
     }
 
-    frmId = FrmId(obj, ANIM_FALL_FRONT, weaponAnimationFromFid(obj->fid), obj->rotation + 1);
+    frmId = FrmId(obj, ANIM_FALL_FRONT, obj->rotation + 1);
     // CE: fixed vanilla logic that returned ANIM_FALL_BACK if artExists for ANIM_FALL_FRONT returned true.
     if (!frmId.exist()) {
         return ANIM_FALL_BACK;
@@ -341,11 +342,11 @@ void showDamageToObject(Object* defender, int damage, int flags, Object* weapon,
     FrmId frmId;
     const char* sfx_name;
 
-    if (critterFlagCheck(defender->pid, CRITTER_NO_KNOCKBACK)) {
+    if (critterFlagCheck(defender, CRITTER_NO_KNOCKBACK)) {
         knockbackDistance = 0;
     }
 
-    AnimationType anim = animationTypeFromFid(defender->fid);
+    AnimationType anim = FrmId(defender).animationType();
     if (!critterIsProne(defender)) {
         if ((flags & DAM_DEAD) != DAM_NONE) {
             anim = pickDeathAnim(attacker, defender, weapon, damage, attackerAnimation, hitFromFront);
@@ -356,7 +357,7 @@ void showDamageToObject(Object* defender, int damage, int flags, Object* weapon,
                     actionKnockdown(defender, &anim, knockbackDistance, knockbackRotation, delay);
                     anim = actionBlood(defender, anim, -1);
                 } else {
-                    sfx_name = sfxBuildCharName(defender, anim, CHARACTER_SOUND_EFFECT_DIE);
+                    sfx_name = sfxBuildCharName(defender, anim, CharacterSoundEffect::Die);
                     animationRegisterPlaySoundEffect(defender, sfx_name, delay);
 
                     anim = pickFallAnim(defender, anim);
@@ -367,9 +368,9 @@ void showDamageToObject(Object* defender, int damage, int flags, Object* weapon,
                     }
                 }
             } else {
-                frmId = FrmId(defender, ANIM_FIRE_DANCE, weaponAnimationFromFid(defender->fid), defender->rotation + 1);
+                frmId = FrmId(defender, ANIM_FIRE_DANCE, defender->rotation + 1);
                 if (frmId.exist()) {
-                    sfx_name = sfxBuildCharName(defender, anim, CHARACTER_SOUND_EFFECT_UNUSED);
+                    sfx_name = sfxBuildCharName(defender, anim, CharacterSoundEffect::Unused);
                     animationRegisterPlaySoundEffect(defender, sfx_name, delay);
 
                     // SFALL
@@ -430,14 +431,14 @@ void showDamageToObject(Object* defender, int damage, int flags, Object* weapon,
                 }
 
                 anim = ANIM_BURNED_TO_NOTHING;
-                sfx_name = sfxBuildCharName(defender, anim, CHARACTER_SOUND_EFFECT_UNUSED);
+                sfx_name = sfxBuildCharName(defender, anim, CharacterSoundEffect::Unused);
                 animationRegisterPlaySoundEffect(defender, sfx_name, -1);
                 animationRegisterAnimate(defender, anim, 0);
             }
         } else {
             if ((flags & (DAM_KNOCKED_OUT | DAM_KNOCKED_DOWN)) != 0) {
                 anim = hitFromFront ? ANIM_FALL_BACK : ANIM_FALL_FRONT;
-                sfx_name = sfxBuildCharName(defender, anim, CHARACTER_SOUND_EFFECT_UNUSED);
+                sfx_name = sfxBuildCharName(defender, anim, CharacterSoundEffect::Unused);
                 animationRegisterPlaySoundEffect(defender, sfx_name, delay);
                 if (knockbackDistance != 0) {
                     actionKnockdown(defender, &anim, knockbackDistance, knockbackRotation, 0);
@@ -445,10 +446,10 @@ void showDamageToObject(Object* defender, int damage, int flags, Object* weapon,
                     anim = pickFallAnim(defender, anim);
                     animationRegisterAnimate(defender, anim, 0);
                 }
-            } else if ((flags & DAM_ON_FIRE) != DAM_NONE && FrmId(defender, ANIM_FIRE_DANCE, weaponAnimationFromFid(defender->fid), defender->rotation + 1).exist()) {
+            } else if ((flags & DAM_ON_FIRE) != DAM_NONE && FrmId(defender, ANIM_FIRE_DANCE, defender->rotation + 1).exist()) {
                 animationRegisterAnimate(defender, ANIM_FIRE_DANCE, delay);
 
-                frmId = FrmId(defender, ANIM_STAND, weaponAnimationFromFid(defender->fid), defender->rotation + 1);
+                frmId = FrmId(defender, ANIM_STAND, defender->rotation + 1);
                 animationRegisterSetFrmId(defender, frmId, -1);
             } else {
                 if (knockbackDistance != 0) {
@@ -460,13 +461,13 @@ void showDamageToObject(Object* defender, int damage, int flags, Object* weapon,
                         animationRegisterAnimate(defender, ANIM_PRONE_TO_STANDING, -1);
                     }
                 } else {
-                    if (hitFromFront || !FrmId(defender, ANIM_HIT_FROM_BACK, weaponAnimationFromFid(defender->fid), defender->rotation + 1).exist()) {
+                    if (hitFromFront || !FrmId(defender, ANIM_HIT_FROM_BACK, defender->rotation + 1).exist()) {
                         anim = ANIM_HIT_FROM_FRONT;
                     } else {
                         anim = ANIM_HIT_FROM_BACK;
                     }
 
-                    sfx_name = sfxBuildCharName(defender, anim, CHARACTER_SOUND_EFFECT_UNUSED);
+                    sfx_name = sfxBuildCharName(defender, anim, CharacterSoundEffect::Unused);
                     animationRegisterPlaySoundEffect(defender, sfx_name, delay);
 
                     animationRegisterAnimate(defender, anim, 0);
@@ -487,7 +488,7 @@ void showDamageToObject(Object* defender, int damage, int flags, Object* weapon,
             animationRegisterSetFrmId(weapon, MiscFrameId::RocketExplosion, 0);
             animationRegisterAnimateAndHide(weapon, ANIM_STAND, 0);
 
-            sfx_name = sfxBuildWeaponName(WEAPON_SOUND_EFFECT_HIT, weapon, HIT_MODE_RIGHT_WEAPON_PRIMARY, defender);
+            sfx_name = sfxBuildWeaponName(WeaponSoundEffect::Hit, weapon, HIT_MODE_RIGHT_WEAPON_PRIMARY, defender);
             animationRegisterPlaySoundEffect(weapon, sfx_name, 0);
 
             animationRegisterHideObjectForced(weapon);
@@ -512,7 +513,7 @@ int _show_death(Object* obj, AnimationType anim)
 
     objectGetRect(obj, &dirtyRect);
     if (anim < ANIM_FALL_BACK_SF && anim > ANIM_FALL_FRONT_BLOOD_SF) {
-        const FrmId frmId = FrmId(obj, static_cast<AnimationType>(anim + 28), weaponAnimationFromFid(obj->fid), obj->rotation + 1);
+        const FrmId frmId = FrmId(obj, static_cast<AnimationType>(anim + 28), obj->rotation + 1);
         if (objectSetFrmId(obj, frmId, &tempRect) == 0) {
             rectUnion(&dirtyRect, &tempRect, &dirtyRect);
         }
@@ -522,7 +523,7 @@ int _show_death(Object* obj, AnimationType anim)
         }
     }
 
-    if (!critterFlagCheck(obj->pid, CRITTER_FLAT)) {
+    if (!critterFlagCheck(obj, CRITTER_FLAT)) {
         obj->flags |= OBJECT_NO_BLOCK;
         if (_obj_toggle_flat(obj, &tempRect) == 0) {
             rectUnion(&dirtyRect, &tempRect, &dirtyRect);
@@ -533,7 +534,7 @@ int _show_death(Object* obj, AnimationType anim)
         rectUnion(&dirtyRect, &tempRect, &dirtyRect);
     }
 
-    if (anim >= ANIM_ELECTRIFIED_TO_NOTHING && anim <= ANIM_EXPLODED_TO_NOTHING && !critterFlagCheck(obj->pid, CRITTER_SPECIAL_DEATH) && !critterFlagCheck(obj->pid, CRITTER_NO_DROP)) {
+    if (anim >= ANIM_ELECTRIFIED_TO_NOTHING && anim <= ANIM_EXPLODED_TO_NOTHING && !critterFlagCheck(obj, CRITTER_SPECIAL_DEATH) && !critterFlagCheck(obj, CRITTER_NO_DROP)) {
         itemDropAll(obj, obj->tile);
     }
 
@@ -549,7 +550,7 @@ int showDamageToExtras(Attack* attack)
 {
     for (int index = 0; index < attack->extrasLength; index++) {
         Object* obj = attack->extras[index];
-        if (objectTypeFromFid(obj->fid) == OBJ_TYPE_CRITTER) {
+        if (FrmId(obj).objectType() == OBJ_TYPE_CRITTER) {
             // NOTE: Uninline.
             bool hitFromFront = _is_hit_from_front(attack->attacker, obj);
             reg_anim_begin(ANIMATION_REQUEST_RESERVED);
@@ -577,7 +578,7 @@ void showDamage(Attack* attack, AnimationType attackerAnimation, int delay)
 {
     for (int index = 0; index < attack->extrasLength; index++) {
         Object* object = attack->extras[index];
-        if (objectTypeFromFid(object->fid) == OBJ_TYPE_CRITTER) {
+        if (FrmId(object).objectType() == OBJ_TYPE_CRITTER) {
             animationRegisterPing(ANIMATION_REQUEST_RESERVED, delay);
             delay = 0;
         }
@@ -592,9 +593,9 @@ void showDamage(Attack* attack, AnimationType attackerAnimation, int delay)
             // NOTE: Uninline.
             bool hitFromFront = _is_hit_from_front(attack->attacker, attack->defender);
 
-            if (objectTypeFromFid(attack->defender->fid) == OBJ_TYPE_CRITTER) {
+            if (FrmId(attack->defender).objectType() == OBJ_TYPE_CRITTER) {
                 Rotation knockbackRotation = tileGetRotationTo(attack->attacker->tile, attack->defender->tile);
-                AnimationType attackerAnimForShow = FrmId(attack->attacker->fid) == SceneryFrameId::ForceField3
+                AnimationType attackerAnimForShow = FrmId(attack->attacker) == SceneryFrameId::ForceField3
                     ? attackerAnimation
                     : critterGetAnimationForHitMode(attack->attacker, attack->hitMode);
 
@@ -646,7 +647,7 @@ int _action_melee(Attack* attack, AnimationType anim)
     reg_anim_begin(ANIMATION_REQUEST_RESERVED);
     _register_priority(1);
 
-    frmId = FrmId(attack->attacker, anim, weaponAnimationFromFid(attack->attacker->fid), attack->attacker->rotation + 1);
+    frmId = FrmId(attack->attacker, anim, attack->attacker->rotation + 1);
     art = artLock(frmId, &cache_entry);
     if (art != nullptr) {
         delay = artGetActionFrame(art);
@@ -659,9 +660,9 @@ int _action_melee(Attack* attack, AnimationType anim)
     animationRegisterRotateToTile(attack->attacker, attack->defender->tile);
 
     if (anim != ANIM_THROW_PUNCH && anim != ANIM_KICK_LEG) {
-        sfx_name = sfxBuildWeaponName(WEAPON_SOUND_EFFECT_ATTACK, attack->weapon, attack->hitMode, attack->defender);
+        sfx_name = sfxBuildWeaponName(WeaponSoundEffect::Attack, attack->weapon, attack->hitMode, attack->defender);
     } else {
-        sfx_name = sfxBuildCharName(attack->attacker, anim, CHARACTER_SOUND_EFFECT_UNUSED);
+        sfx_name = sfxBuildCharName(attack->attacker, anim, CharacterSoundEffect::Unused);
     }
 
     strcpy(sfx_name_temp, sfx_name);
@@ -671,9 +672,9 @@ int _action_melee(Attack* attack, AnimationType anim)
     if (attack->attackerFlags & 0x0300) {
         animationRegisterPlaySoundEffect(attack->attacker, sfx_name_temp, 0);
         if (anim != ANIM_THROW_PUNCH && anim != ANIM_KICK_LEG) {
-            sfx_name = sfxBuildWeaponName(WEAPON_SOUND_EFFECT_HIT, attack->weapon, attack->hitMode, attack->defender);
+            sfx_name = sfxBuildWeaponName(WeaponSoundEffect::Hit, attack->weapon, attack->hitMode, attack->defender);
         } else {
-            sfx_name = sfxBuildCharName(attack->attacker, anim, CHARACTER_SOUND_EFFECT_CONTACT);
+            sfx_name = sfxBuildCharName(attack->attacker, anim, CharacterSoundEffect::Contact);
         }
 
         strcpy(sfx_name_temp, sfx_name);
@@ -686,7 +687,7 @@ int _action_melee(Attack* attack, AnimationType anim)
             animationRegisterPlaySoundEffect(attack->attacker, sfx_name_temp, -1);
             animationRegisterAnimate(attack->attacker, anim, 0);
         } else {
-            frmId = FrmId(attack->defender, ANIM_DODGE_ANIM, weaponAnimationFromFid(attack->defender->fid), attack->defender->rotation + 1);
+            frmId = FrmId(attack->defender, ANIM_DODGE_ANIM, attack->defender->rotation + 1);
             art = artLock(frmId, &cache_entry);
             if (art != nullptr) {
                 int dodgeDelay = artGetActionFrame(art);
@@ -696,11 +697,11 @@ int _action_melee(Attack* attack, AnimationType anim)
                     animationRegisterPlaySoundEffect(attack->attacker, sfx_name_temp, -1);
                     animationRegisterAnimate(attack->attacker, anim, 0);
 
-                    sfx_name = sfxBuildCharName(attack->defender, ANIM_DODGE_ANIM, CHARACTER_SOUND_EFFECT_UNUSED);
+                    sfx_name = sfxBuildCharName(attack->defender, ANIM_DODGE_ANIM, CharacterSoundEffect::Unused);
                     animationRegisterPlaySoundEffect(attack->defender, sfx_name, delay - dodgeDelay);
                     animationRegisterAnimate(attack->defender, ANIM_DODGE_ANIM, 0);
                 } else {
-                    sfx_name = sfxBuildCharName(attack->defender, ANIM_DODGE_ANIM, CHARACTER_SOUND_EFFECT_UNUSED);
+                    sfx_name = sfxBuildCharName(attack->defender, ANIM_DODGE_ANIM, CharacterSoundEffect::Unused);
                     animationRegisterPlaySoundEffect(attack->defender, sfx_name, -1);
                     animationRegisterAnimate(attack->defender, ANIM_DODGE_ANIM, 0);
                     animationRegisterPlaySoundEffect(attack->attacker, sfx_name_temp, dodgeDelay - delay);
@@ -744,9 +745,9 @@ int _action_ranged(Attack* attack, AnimationType anim)
 
     Proto* weaponProto;
     Object* weapon = attack->weapon;
-    protoGetProto(weapon->pid, &weaponProto);
+    protoGetProto(weapon, &weaponProto);
 
-    const FrmId frmId = FrmId(attack->attacker, anim, weaponAnimationFromFid(attack->attacker->fid), attack->attacker->rotation + 1);
+    const FrmId frmId = FrmId(attack->attacker, anim, attack->attacker->rotation + 1);
     CacheEntry* artHandle;
     Art* art = artLock(frmId, &artHandle);
     int delay = (art != nullptr) ? artGetActionFrame(art) : 0;
@@ -773,10 +774,10 @@ int _action_ranged(Attack* attack, AnimationType anim)
     _combatai_msg(attack->attacker, attack, AI_MESSAGE_TYPE_ATTACK, 0);
 
     const char* sfx;
-    if ((weaponAnimationFromFid(attack->attacker->fid)) != WEAPON_ANIMATION_NONE) {
-        sfx = sfxBuildWeaponName(WEAPON_SOUND_EFFECT_ATTACK, weapon, attack->hitMode, attack->defender);
+    if ((FrmId(attack->attacker).weaponAnimation()) != WeaponAnimation::None) {
+        sfx = sfxBuildWeaponName(WeaponSoundEffect::Attack, weapon, attack->hitMode, attack->defender);
     } else {
-        sfx = sfxBuildCharName(attack->attacker, anim, CHARACTER_SOUND_EFFECT_UNUSED);
+        sfx = sfxBuildCharName(attack->attacker, anim, CharacterSoundEffect::Unused);
     }
     animationRegisterPlaySoundEffect(attack->attacker, sfx, -1);
 
@@ -786,13 +787,15 @@ int _action_ranged(Attack* attack, AnimationType anim)
         if ((attack->attackerFlags & DAM_HIT) != DAM_NONE || (attack->attackerFlags & DAM_CRITICAL) == DAM_NONE) {
             bool l56 = false;
 
-            int projectilePid = weaponGetProjectilePid(weapon);
+            const ProtoId projectileProtoId = weaponGetProjectileProtoId(weapon);
             Proto* projectileProto;
-            if (protoGetProto(projectilePid, &projectileProto) != -1 && projectileProto->fid != -1) {
+            if (protoGetProto(projectileProtoId, &projectileProto) != -1 && FrmId(projectileProto).valid()) {
                 if (anim == ANIM_THROW_ANIM) {
                     projectile = weapon;
-                    weaponFrmId = FrmId(weapon->fid);
+                    weaponFrmId = FrmId(weapon);
                     ObjectFlags weaponFlags = weapon->flags;
+                    // CE: Read before _cAIPrepWeaponItem() lights an unlit flare.
+                    const ProtoId weaponPid(weapon);
 
                     InterfaceItemAction leftItemAction;
                     InterfaceItemAction rightItemAction;
@@ -800,8 +803,13 @@ int _action_ranged(Attack* attack, AnimationType anim)
 
                     itemRemoveWithReason(attack->attacker, weapon, 1, RemoveInventoryObjectHookReason::Throw);
                     replacedWeapon = itemReplace(attack->attacker, weapon, weaponFlags & OBJECT_IN_ANY_HAND);
-                    objectSetFrmId(projectile, FrmId(projectileProto->fid), nullptr);
+                    objectSetFrmId(projectile, projectileProto, nullptr);
                     _cAIPrepWeaponItem(attack->attacker, weapon);
+
+                    // CE: Restore the thrower's light after throwing a held lit flare.
+                    if (weaponPid == ItemProtoTypeId::LitFlare && (weaponFlags & OBJECT_IN_ANY_HAND) != OBJECT_NONE) {
+                        critterRestoreLightWithoutFlare(attack->attacker);
+                    }
 
                     if (attack->attacker == gDude) {
                         if (replacedWeapon == nullptr) {
@@ -816,7 +824,7 @@ int _action_ranged(Attack* attack, AnimationType anim)
 
                     _obj_connect(weapon, attack->attacker->tile, attack->attacker->elevation, nullptr);
                 } else {
-                    objectCreateWithFrmIdPid(&projectile, FrmId(projectileProto->fid), -1);
+                    objectCreateWithFrmIdProtoId(&projectile, FrmId(projectileProto), ProtoId::Empty());
                 }
 
                 objectHide(projectile, nullptr);
@@ -836,7 +844,7 @@ int _action_ranged(Attack* attack, AnimationType anim)
 
                 animationRegisterUnsetFlag(projectile, OBJECT_HIDDEN, delay);
 
-                const char* sfx = sfxBuildWeaponName(WEAPON_SOUND_EFFECT_AMMO_FLYING, weapon, attack->hitMode, attack->defender);
+                const char* sfx = sfxBuildWeaponName(WeaponSoundEffect::AmmoFlying, weapon, attack->hitMode, attack->defender);
                 animationRegisterPlaySoundEffect(projectile, sfx, 0);
 
                 int explosionCenterTile;
@@ -882,7 +890,7 @@ int _action_ranged(Attack* attack, AnimationType anim)
 
                         animationRegisterSetFrmId(projectile, explosionFrmId, -1);
 
-                        const char* sfx = sfxBuildWeaponName(WEAPON_SOUND_EFFECT_HIT, weapon, attack->hitMode, attack->defender);
+                        const char* sfx = sfxBuildWeaponName(WeaponSoundEffect::Hit, weapon, attack->hitMode, attack->defender);
                         animationRegisterPlaySoundEffect(projectile, sfx, 0);
 
                         // SFALL
@@ -902,7 +910,7 @@ int _action_ranged(Attack* attack, AnimationType anim)
                         explosionGetPattern(&startRotation, &endRotation);
 
                         for (Rotation rotation = startRotation; rotation < endRotation; rotation++) {
-                            if (objectCreateWithFrmIdPid(&(adjacentObjects[rotation]), explosionFrmId, -1) != -1) {
+                            if (objectCreateWithFrmIdProtoId(&(adjacentObjects[rotation]), explosionFrmId, ProtoId::Empty()) != -1) {
                                 objectHide(adjacentObjects[rotation], nullptr);
 
                                 int adjacentTile = tileGetTileInDirection(explosionCenterTile, rotation, 1);
@@ -933,7 +941,7 @@ int _action_ranged(Attack* attack, AnimationType anim)
                 }
 
                 if (!l56) {
-                    const char* sfx = sfxBuildWeaponName(WEAPON_SOUND_EFFECT_HIT, weapon, attack->hitMode, attack->defender);
+                    const char* sfx = sfxBuildWeaponName(WeaponSoundEffect::Hit, weapon, attack->hitMode, attack->defender);
                     animationRegisterPlaySoundEffect(weapon, sfx, delay);
                 }
 
@@ -987,14 +995,14 @@ int _action_ranged(Attack* attack, AnimationType anim)
             bool takeOutAnimationRegistered = false;
             if (replacedWeapon != nullptr) {
                 WeaponAnimation weaponAnimationCode = weaponGetAnimationCode(replacedWeapon);
-                if (weaponAnimationCode != 0) {
+                if (weaponAnimationCode != WeaponAnimation::None) {
                     animationRegisterTakeOutWeapon(attack->attacker, weaponAnimationCode, -1);
                     takeOutAnimationRegistered = true;
                 }
             }
 
             if (!takeOutAnimationRegistered) {
-                const FrmId frmId = FrmId(attack->attacker, ANIM_STAND, WEAPON_ANIMATION_NONE, attack->attacker->rotation + 1);
+                const FrmId frmId = FrmId(attack->attacker, ANIM_STAND, WeaponAnimation::None, attack->attacker->rotation + 1);
                 animationRegisterSetFrmId(attack->attacker, frmId, -1);
             }
         } else {
@@ -1044,7 +1052,7 @@ int _is_next_to(Object* obj1, Object* obj2)
 int _action_climb_ladder(Object* critter, Object* ladder)
 {
     if (critter == gDude) {
-        AnimationType anim = animationTypeFromFid(gDude->fid);
+        AnimationType anim = FrmId(gDude).animationType();
         if (anim == ANIM_WALK || anim == ANIM_RUNNING) {
             reg_anim_clear(gDude);
         }
@@ -1054,7 +1062,10 @@ int _action_climb_ladder(Object* critter, Object* ladder)
     int actionPoints;
     if (isInCombat()) {
         animationRequestOptions = ANIMATION_REQUEST_RESERVED;
-        actionPoints = critter->data.critter.combat.ap;
+        // SFALL: Fix for the player's movement in combat being interrupted
+        // when trying to use objects with Bonus Move APs available: the walk
+        // may take the free move points too (the player's, 0 out of his turn).
+        actionPoints = critter->data.critter.combat.ap + _combat_free_move;
     } else {
         animationRequestOptions = ANIMATION_REQUEST_UNRESERVED;
         actionPoints = -1;
@@ -1085,19 +1096,19 @@ int _action_climb_ladder(Object* critter, Object* ladder)
     animationRegisterRotateToTile(critter, ladder->tile);
     animationRegisterCallbackForced(critter, ladder, (AnimationCallback*)checkSceneryUseActionPointCost, -1);
 
-    WeaponAnimation weaponAnimationCode = weaponAnimationFromFid(critter->fid);
-    if (weaponAnimationCode != 0) {
-        const char* puttingAwaySfx = sfxBuildCharName(critter, ANIM_PUT_AWAY, CHARACTER_SOUND_EFFECT_UNUSED);
+    WeaponAnimation weaponAnimationCode = FrmId(critter).weaponAnimation();
+    if (weaponAnimationCode != WeaponAnimation::None) {
+        const char* puttingAwaySfx = sfxBuildCharName(critter, ANIM_PUT_AWAY, CharacterSoundEffect::Unused);
         animationRegisterPlaySoundEffect(critter, puttingAwaySfx, -1);
         animationRegisterAnimate(critter, ANIM_PUT_AWAY, 0);
     }
 
-    const char* climbingSfx = sfxBuildCharName(critter, ANIM_CLIMB_LADDER, CHARACTER_SOUND_EFFECT_UNUSED);
+    const char* climbingSfx = sfxBuildCharName(critter, ANIM_CLIMB_LADDER, CharacterSoundEffect::Unused);
     animationRegisterPlaySoundEffect(critter, climbingSfx, -1);
     animationRegisterAnimate(critter, ANIM_CLIMB_LADDER, 0);
     animationRegisterCallback(critter, ladder, (AnimationCallback*)objectUse, -1);
 
-    if (weaponAnimationCode != 0) {
+    if (weaponAnimationCode != WeaponAnimation::None) {
         animationRegisterTakeOutWeapon(critter, weaponAnimationCode, -1);
     }
 
@@ -1108,10 +1119,10 @@ int _action_climb_ladder(Object* critter, Object* ladder)
 int _action_use_an_item_on_object(Object* user, Object* targetObj, Object* item)
 {
     Proto* proto = nullptr;
-    ObjectType type = objectTypeFromFid(targetObj->fid);
+    ObjectType type = FrmId(targetObj).objectType();
     int sceneryType = -1;
     if (type == OBJ_TYPE_SCENERY) {
-        if (protoGetProto(targetObj->pid, &proto) == -1) {
+        if (protoGetProto(targetObj, &proto) == -1) {
             return -1;
         }
 
@@ -1120,7 +1131,7 @@ int _action_use_an_item_on_object(Object* user, Object* targetObj, Object* item)
 
     if (sceneryType != SCENERY_TYPE_LADDER_UP || item != nullptr) {
         if (user == gDude) {
-            AnimationType anim = animationTypeFromFid(gDude->fid);
+            AnimationType anim = FrmId(gDude).animationType();
             if (anim == ANIM_WALK || anim == ANIM_RUNNING) {
                 reg_anim_clear(gDude);
             }
@@ -1130,7 +1141,10 @@ int _action_use_an_item_on_object(Object* user, Object* targetObj, Object* item)
         int actionPoints;
         if (isInCombat()) {
             animationRequestOptions = ANIMATION_REQUEST_RESERVED;
-            actionPoints = user->data.critter.combat.ap;
+            // SFALL: Fix for the player's movement in combat being
+            // interrupted when trying to use objects with Bonus Move APs
+            // available (see `_action_climb_ladder`).
+            actionPoints = user->data.critter.combat.ap + _combat_free_move;
         } else {
             animationRequestOptions = ANIMATION_REQUEST_UNRESERVED;
             actionPoints = -1;
@@ -1154,15 +1168,15 @@ int _action_use_an_item_on_object(Object* user, Object* targetObj, Object* item)
             animationRegisterCallback(user, targetObj, (AnimationCallback*)checkSceneryUseActionPointCost, -1);
         }
 
-        WeaponAnimation weaponAnimCode = weaponAnimationFromFid(user->fid);
-        if (weaponAnimCode != WEAPON_ANIMATION_NONE) {
-            const char* sfx = sfxBuildCharName(user, ANIM_PUT_AWAY, CHARACTER_SOUND_EFFECT_UNUSED);
+        WeaponAnimation weaponAnimCode = FrmId(user).weaponAnimation();
+        if (weaponAnimCode != WeaponAnimation::None) {
+            const char* sfx = sfxBuildCharName(user, ANIM_PUT_AWAY, CharacterSoundEffect::Unused);
             animationRegisterPlaySoundEffect(user, sfx, -1);
             animationRegisterAnimate(user, ANIM_PUT_AWAY, 0);
         }
 
         AnimationType anim;
-        ObjectType objectType = objectTypeFromFid(targetObj->fid);
+        ObjectType objectType = FrmId(targetObj).objectType();
         if (objectType == OBJ_TYPE_CRITTER && critterIsProne(targetObj)) {
             anim = ANIM_MAGIC_HANDS_GROUND;
         } else if (objectType == OBJ_TYPE_SCENERY && (proto->scenery.extendedFlags & PROTO_EXT_FLAG_MAGIC_HANDS_GROUND) != PROTO_EXT_FLAG_NONE) {
@@ -1182,7 +1196,7 @@ int _action_use_an_item_on_object(Object* user, Object* targetObj, Object* item)
             animationRegisterCallback(user, targetObj, (AnimationCallback*)objectUse, -1);
         }
 
-        if (weaponAnimCode != WEAPON_ANIMATION_NONE) {
+        if (weaponAnimCode != WeaponAnimation::None) {
             animationRegisterTakeOutWeapon(user, weaponAnimCode, -1);
         }
 
@@ -1201,12 +1215,12 @@ int _action_use_an_object(Object* user, Object* targetObj)
 // 0x412134
 int actionPickUp(Object* critter, Object* item)
 {
-    if (objectTypeFromFid(item->fid) != OBJ_TYPE_ITEM) {
+    if (FrmId(item).objectType() != OBJ_TYPE_ITEM) {
         return -1;
     }
 
     if (critter == gDude) {
-        AnimationType animationCode = animationTypeFromFid(gDude->fid);
+        AnimationType animationCode = FrmId(gDude).animationType();
         if (animationCode == ANIM_WALK || animationCode == ANIM_RUNNING) {
             reg_anim_clear(gDude);
         }
@@ -1228,12 +1242,12 @@ int actionPickUp(Object* critter, Object* item)
     animationRegisterCallback(critter, item, (AnimationCallback*)checkSceneryUseActionPointCost, -1);
 
     Proto* itemProto;
-    protoGetProto(item->pid, &itemProto);
+    protoGetProto(item, &itemProto);
 
-    if (itemProto->item.type != ITEM_TYPE_CONTAINER || _proto_action_can_pickup(item->pid)) {
+    if (itemProto->item.type != ITEM_TYPE_CONTAINER || _proto_action_can_pickup(item)) {
         animationRegisterAnimate(critter, ANIM_MAGIC_HANDS_GROUND, 0);
 
-        const FrmId frmId = FrmId(critter, ANIM_MAGIC_HANDS_GROUND, weaponAnimationFromFid(critter->fid), critter->rotation + 1);
+        const FrmId frmId = FrmId(critter, ANIM_MAGIC_HANDS_GROUND, critter->rotation + 1);
 
         int actionFrame;
         CacheEntry* cacheEntry;
@@ -1245,16 +1259,16 @@ int actionPickUp(Object* critter, Object* item)
         }
 
         char sfx[16];
-        if (artCopyFileName(FrmId(item->fid), sfx) == 0) {
+        if (artCopyFileName(FrmId(item), sfx) == 0) {
             // NOTE: looks like they copy sfx one more time, what for?
             animationRegisterPlaySoundEffect(item, sfx, actionFrame);
         }
 
         animationRegisterCallback(critter, item, (AnimationCallback*)objectPickup, actionFrame);
     } else {
-        WeaponAnimation weaponAnimationCode = weaponAnimationFromFid(critter->fid);
-        if (weaponAnimationCode != 0) {
-            const char* sfx = sfxBuildCharName(critter, ANIM_PUT_AWAY, CHARACTER_SOUND_EFFECT_UNUSED);
+        WeaponAnimation weaponAnimationCode = FrmId(critter).weaponAnimation();
+        if (weaponAnimationCode != WeaponAnimation::None) {
+            const char* sfx = sfxBuildCharName(critter, ANIM_PUT_AWAY, CharacterSoundEffect::Unused);
             animationRegisterPlaySoundEffect(critter, sfx, -1);
             animationRegisterAnimate(critter, ANIM_PUT_AWAY, -1);
         }
@@ -1265,7 +1279,7 @@ int actionPickUp(Object* critter, Object* item)
             : ANIM_MAGIC_HANDS_GROUND;
         bool animateUse = actionRegisterUseAnimObj(critter, item, &anim, 0);
 
-        const FrmId frmId = FrmId(critter, anim, WEAPON_ANIMATION_NONE, critter->rotation + 1);
+        const FrmId frmId = FrmId(critter, anim, WeaponAnimation::None, critter->rotation + 1);
 
         int actionFrame = -1;
         CacheEntry* cacheEntry;
@@ -1281,7 +1295,7 @@ int actionPickUp(Object* critter, Object* item)
             animationRegisterCallback(critter, item, (AnimationCallback*)objectUseContainer, actionFrame);
         }
 
-        if (weaponAnimationCode != 0) {
+        if (weaponAnimationCode != WeaponAnimation::None) {
             animationRegisterTakeOutWeapon(critter, weaponAnimationCode, -1);
         }
 
@@ -1299,17 +1313,17 @@ int actionPickUp(Object* critter, Object* item)
 // 0x4123E8 was _action_loot_container
 int actionLootCritter(Object* critter, Object* target)
 {
-    if (objectTypeFromFid(target->fid) != OBJ_TYPE_CRITTER) {
+    if (FrmId(target).objectType() != OBJ_TYPE_CRITTER) {
         return -1;
     }
 
     // SFALL: Fix for trying to loot corpses with the "NoSteal" flag.
-    if (critterFlagCheck(target->pid, CRITTER_NO_STEAL)) {
+    if (critterFlagCheck(target, CRITTER_NO_STEAL)) {
         return -1;
     }
 
     if (critter == gDude) {
-        AnimationType anim = animationTypeFromFid(gDude->fid);
+        AnimationType anim = FrmId(gDude).animationType();
         if (anim == ANIM_WALK || anim == ANIM_RUNNING) {
             reg_anim_clear(gDude);
         }
@@ -1372,6 +1386,7 @@ int actionUseSkill(Object* user, Object* target, Skill skill)
         return -1;
     }
 
+    ObjectType targetObjectType = ProtoId(target).objectType();
     switch (skill) {
     case SKILL_FIRST_AID:
     case SKILL_DOCTOR:
@@ -1380,7 +1395,7 @@ int actionUseSkill(Object* user, Object* target, Skill skill)
             return _action_use_skill_in_combat_error(user);
         }
 
-        if (objectTypeFromPid(target->pid) != OBJ_TYPE_CRITTER) {
+        if (targetObjectType != OBJ_TYPE_CRITTER) {
             return -1;
         }
         break;
@@ -1390,7 +1405,7 @@ int actionUseSkill(Object* user, Object* target, Skill skill)
             return _action_use_skill_in_combat_error(user);
         }
 
-        if (objectTypeFromPid(target->pid) != OBJ_TYPE_ITEM && objectTypeFromPid(target->pid) != OBJ_TYPE_SCENERY) {
+        if (targetObjectType != OBJ_TYPE_ITEM && targetObjectType != OBJ_TYPE_SCENERY) {
             return -1;
         }
 
@@ -1401,7 +1416,7 @@ int actionUseSkill(Object* user, Object* target, Skill skill)
             return _action_use_skill_in_combat_error(user);
         }
 
-        if (objectTypeFromPid(target->pid) != OBJ_TYPE_ITEM && objectTypeFromPid(target->pid) != OBJ_TYPE_CRITTER) {
+        if (targetObjectType != OBJ_TYPE_ITEM && targetObjectType != OBJ_TYPE_CRITTER) {
             return -1;
         }
 
@@ -1416,7 +1431,7 @@ int actionUseSkill(Object* user, Object* target, Skill skill)
             return _action_use_skill_in_combat_error(user);
         }
 
-        if (objectTypeFromPid(target->pid) == OBJ_TYPE_CRITTER) {
+        if (targetObjectType == OBJ_TYPE_CRITTER) {
             return -1;
         }
 
@@ -1428,7 +1443,7 @@ int actionUseSkill(Object* user, Object* target, Skill skill)
             return _action_use_skill_in_combat_error(user);
         }
 
-        if (objectTypeFromPid(target->pid) != OBJ_TYPE_CRITTER) {
+        if (targetObjectType != OBJ_TYPE_CRITTER) {
             break;
         }
 
@@ -1486,7 +1501,7 @@ int actionUseSkill(Object* user, Object* target, Skill skill)
 
         if (partyMember != nullptr) {
             performer = partyMember;
-            AnimationType anim = animationTypeFromFid(partyMember->fid);
+            AnimationType anim = FrmId(partyMember).animationType();
             if (anim != ANIM_WALK && anim != ANIM_RUNNING) {
                 if (anim != ANIM_STAND) {
                     performer = gDude;
@@ -1517,7 +1532,7 @@ int actionUseSkill(Object* user, Object* target, Skill skill)
         }
 
         if (partyMember == nullptr) {
-            AnimationType anim = animationTypeFromFid(performer->fid);
+            AnimationType anim = FrmId(performer).animationType();
             if (anim == ANIM_WALK || anim == ANIM_RUNNING) {
                 reg_anim_clear(performer);
             }
@@ -1540,8 +1555,8 @@ int actionUseSkill(Object* user, Object* target, Skill skill)
 
     animationRegisterCallbackForced(performer, target, (AnimationCallback*)_is_next_to, -1);
 
-    AnimationType anim = (objectTypeFromFid(target->fid) == OBJ_TYPE_CRITTER && critterIsProne(target)) ? ANIM_MAGIC_HANDS_GROUND : ANIM_MAGIC_HANDS_MIDDLE;
-    const FrmId frmId = FrmId(performer, anim, WEAPON_ANIMATION_NONE, performer->rotation + 1);
+    AnimationType anim = (FrmId(target).objectType() == OBJ_TYPE_CRITTER && critterIsProne(target)) ? ANIM_MAGIC_HANDS_GROUND : ANIM_MAGIC_HANDS_MIDDLE;
+    const FrmId frmId = FrmId(performer, anim, WeaponAnimation::None, performer->rotation + 1);
 
     CacheEntry* artHandle;
     Art* art = artLock(frmId, &artHandle);
@@ -1611,7 +1626,7 @@ AnimationType pickFallAnim(Object* obj, AnimationType anim)
     }
 
     if (anim == ANIM_FALL_FRONT) {
-        frmId = FrmId(obj, ANIM_FALL_FRONT, weaponAnimationFromFid(obj->fid), obj->rotation + 1);
+        frmId = FrmId(obj, ANIM_FALL_FRONT, obj->rotation + 1);
         if (!frmId.exist()) {
             anim = ANIM_FALL_BACK;
         }
@@ -1628,7 +1643,7 @@ bool _action_explode_running()
 
 // action_explode
 // 0x412CF4
-int actionExplode(int tile, int elevation, int minDamage, int maxDamage, Object* sourceObj, bool animate)
+int actionExplode(int tile, MapElevation elevation, int minDamage, int maxDamage, Object* sourceObj, bool animate)
 {
     if (animate && _action_in_explode) {
         return -2;
@@ -1640,7 +1655,7 @@ int actionExplode(int tile, int elevation, int minDamage, int maxDamage, Object*
     }
 
     Object* explosion;
-    if (objectCreateWithFrmIdPid(&explosion, MiscFrameId::RocketExplosion, -1) == -1) {
+    if (objectCreateWithFrmIdProtoId(&explosion, MiscFrameId::RocketExplosion, ProtoId::Empty()) == -1) {
         internal_free(attack);
         return -1;
     }
@@ -1652,7 +1667,7 @@ int actionExplode(int tile, int elevation, int minDamage, int maxDamage, Object*
 
     Object* adjacentExplosions[ROTATION_COUNT];
     for (Rotation rotation = ROTATION_FIRST; rotation < ROTATION_COUNT; rotation++) {
-        if (objectCreateWithFrmIdPid(&(adjacentExplosions[rotation]), MiscFrameId::RocketExplosion, -1) == -1) {
+        if (objectCreateWithFrmIdProtoId(&(adjacentExplosions[rotation]), MiscFrameId::RocketExplosion, ProtoId::Empty()) == -1) {
             while (--rotation >= ROTATION_FIRST) {
                 objectDestroy(adjacentExplosions[rotation], nullptr);
             }
@@ -1671,7 +1686,7 @@ int actionExplode(int tile, int elevation, int minDamage, int maxDamage, Object*
 
     Object* critter = _obj_blocking_at(nullptr, tile, elevation);
     if (critter != nullptr) {
-        if (objectTypeFromFid(critter->fid) != OBJ_TYPE_CRITTER || (critter->data.critter.combat.results & DAM_DEAD) != DAM_NONE) {
+        if (FrmId(critter).objectType() != OBJ_TYPE_CRITTER || (critter->data.critter.combat.results & DAM_DEAD) != DAM_NONE) {
             critter = nullptr;
         }
     }
@@ -1744,14 +1759,19 @@ int actionExplode(int tile, int elevation, int minDamage, int maxDamage, Object*
 
         showDamageToExtras(attack);
     } else {
+        // SFALL: Fix for destroy_p_proc not being called if the critter is
+        // killed by explosives when you leave the map: run it before
+        // critterKill removes the critter's script.
         if (critter != nullptr) {
             if ((attack->defenderFlags & DAM_DEAD) != DAM_NONE) {
+                scriptExecProc(critter->sid, SCRIPT_PROC_DESTROY);
                 critterKill(critter, ANIM_INVALID, false);
             }
         }
 
         for (int index = 0; index < attack->extrasLength; index++) {
             if ((attack->extrasFlags[index] & DAM_DEAD) != DAM_NONE) {
+                scriptExecProc(attack->extras[index]->sid, SCRIPT_PROC_DESTROY);
                 critterKill(attack->extras[index], ANIM_INVALID, false);
             }
         }
@@ -1882,11 +1902,11 @@ int actionTalk(Object* obj, Object* critter)
         return -1;
     }
 
-    if (objectTypeFromFid(critter->fid) != OBJ_TYPE_CRITTER) {
+    if (FrmId(critter).objectType() != OBJ_TYPE_CRITTER) {
         return -1;
     }
 
-    AnimationType anim = animationTypeFromFid(gDude->fid);
+    AnimationType anim = FrmId(gDude).animationType();
     if (anim == ANIM_WALK || anim == ANIM_RUNNING) {
         reg_anim_clear(gDude);
     }
@@ -1934,7 +1954,7 @@ int _talk_to(Object* _, Object* critter)
 }
 
 // 0x413494
-void actionDamage(int tile, int elevation, int minDamage, int maxDamage, DamageType damageType, bool animated, bool bypassArmor)
+void actionDamage(int tile, MapElevation elevation, int minDamage, int maxDamage, DamageType damageType, bool animated, bool bypassArmor)
 {
     Attack* attack = (Attack*)internal_malloc(sizeof(*attack));
     if (attack == nullptr) {
@@ -1942,7 +1962,7 @@ void actionDamage(int tile, int elevation, int minDamage, int maxDamage, DamageT
     }
 
     Object* attacker;
-    if (objectCreateWithFrmIdPid(&attacker, SceneryFrameId::ForceField3, -1) == -1) {
+    if (objectCreateWithFrmIdProtoId(&attacker, SceneryFrameId::ForceField3, ProtoId::Empty()) == -1) {
         internal_free(attack);
         return;
     }
@@ -2017,7 +2037,7 @@ int _report_dmg(Attack* attack, Object* _)
 // 0x413660
 int _compute_dmg_damage(int min, int max, Object* obj, int* knockbackDistancePtr, DamageType damageType)
 {
-    if (critterFlagCheck(obj->pid, CRITTER_NO_KNOCKBACK)) {
+    if (critterFlagCheck(obj, CRITTER_NO_KNOCKBACK)) {
         knockbackDistancePtr = nullptr;
     }
 
@@ -2043,7 +2063,7 @@ int _compute_dmg_damage(int min, int max, Object* obj, int* knockbackDistancePtr
 bool actionCheckPush(Object* obj, Object* target)
 {
     // Cannot push anything but critters.
-    if (objectTypeFromFid(target->fid) != OBJ_TYPE_CRITTER) {
+    if (FrmId(target).objectType() != OBJ_TYPE_CRITTER) {
         return false;
     }
 

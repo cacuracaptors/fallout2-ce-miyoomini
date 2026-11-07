@@ -29,6 +29,7 @@
 #include "draw.h"
 #include "endgame.h"
 #include "font_manager.h"
+#include "game.h"
 #include "game_dialog.h"
 #include "game_memory.h"
 #include "game_mouse.h"
@@ -71,12 +72,14 @@
 #include "skill.h"
 #include "skilldex.h"
 #include "stat.h"
+#include "string_utils.h"
 #include "svga.h"
 #include "text_font.h"
 #include "tile.h"
 #include "trait.h"
 #include "version.h"
 #include "win32.h"
+#include "window.h"
 #include "window_manager.h"
 #include "worldmap.h"
 
@@ -227,7 +230,7 @@ static char _aBuildHash[] = _BUILD_HASH;
 static bool gGameUiDisabled = false;
 
 // 0x5186B8 game_state_cur
-static int gGameState = GAME_STATE_0;
+static GameState gGameState = GameState::Normal;
 
 // 0x5186BC game_in_mapper
 static bool gIsMapper = false;
@@ -239,7 +242,7 @@ int* gGameGlobalVars = nullptr;
 int gGameGlobalVarsLength = 0;
 
 // 0x5186C8 msg_path
-const char* asc_5186C8 = _aGame_0;
+const char* gGameMsgPath = _aGame_0;
 
 // 0x5186CC game_user_wants_to_quit
 GameQuitRequest _game_user_wants_to_quit = GAME_QUIT_REQUEST_NONE;
@@ -249,13 +252,17 @@ GameQuitRequest _game_user_wants_to_quit = GAME_QUIT_REQUEST_NONE;
 // 0x58E940 misc_message_file
 MessageList gMiscMessageList;
 
+// CE: Texts CE adds (ce.msg). The ones missing in a translation are shown in
+// English, as the code has them.
+MessageList gCeMessageList;
+
 bool gGameLoaded = false;
 
 // CE: Sonora folks like to store objects in global variables.
 static void** gGameGlobalPointers = nullptr;
 
 // 0x442580
-int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, int flags, int argc, char** argv)
+int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, WindowManagerInitFlags flags, int argc, char** argv)
 {
     char path[COMPAT_MAX_PATH];
 
@@ -510,7 +517,7 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, int fl
 
     debugPrint(">message_init\t");
 
-    snprintf(path, sizeof(path), "%s%s", asc_5186C8, "misc.msg");
+    snprintf(path, sizeof(path), "%s%s", gGameMsgPath, "misc.msg");
 
     if (!messageListLoad(&gMiscMessageList, path)) {
         debugPrint("Failed on message_load\n");
@@ -519,6 +526,11 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, int fl
 
     debugPrint(">message_load\t");
     miyooBootLog("init: message_load");
+
+    // CE: Optional, the code has the English texts.
+    messageListInit(&gCeMessageList);
+    snprintf(path, sizeof(path), "%s%s", gGameMsgPath, "ce.msg");
+    messageListLoad(&gCeMessageList, path);
 
     if (scriptsDisable() != 0) {
         debugPrint("Failed on scr_disable\n");
@@ -653,6 +665,7 @@ void gameExit()
     tileDisable();
     messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_MISC, nullptr);
     messageListFree(&gMiscMessageList);
+    messageListFree(&gCeMessageList);
     combatExit();
     gameDialogExit();
     _scr_game_exit();
@@ -697,7 +710,7 @@ void gameExit()
 int gameHandleKey(int eventCode, bool isInCombatMode)
 {
     // NOTE: Uninline.
-    if (gameGetState() == GAME_STATE_5) {
+    if (gameGetState() == GameState::DialogRequested) {
         _gdialogSystemEnter();
     }
 
@@ -706,7 +719,7 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
     miyooShutdownHandleInGame(lsgMiyooShutdownSave);
 
     if (eventCode == -1) {
-        if ((mouseGetEvent() & MOUSE_EVENT_WHEEL) != 0) {
+        if ((mouseGetEvent() & MouseButtonEvent::Wheel) != MouseButtonEvent::None) {
             int wheelX;
             int wheelY;
             mouseGetWheel(&wheelX, &wheelY);
@@ -731,13 +744,13 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
     }
 
     if (eventCode == -2) {
-        int mouseState = mouseGetEvent();
+        MouseButtonEvent mouseEvent = mouseGetEvent();
         int mouseX;
         int mouseY;
         mouseGetPosition(&mouseX, &mouseY);
 
-        if ((mouseState & MOUSE_EVENT_LEFT_BUTTON_DOWN) != 0) {
-            if ((mouseState & MOUSE_EVENT_LEFT_BUTTON_REPEAT) == 0) {
+        if ((mouseEvent & MouseButtonEvent::LeftButtonDown) != MouseButtonEvent::None) {
+            if ((mouseEvent & MouseButtonEvent::LeftButtonRepeat) == MouseButtonEvent::None) {
                 if (mouseX == _scr_size.left || mouseX == _scr_size.right
                     || mouseY == _scr_size.top || mouseY == _scr_size.bottom) {
                     _gmouse_clicked_on_edge = true;
@@ -746,12 +759,12 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
                 }
             }
         } else {
-            if ((mouseState & MOUSE_EVENT_LEFT_BUTTON_UP) != 0) {
+            if ((mouseEvent & MouseButtonEvent::LeftButtonUp) != MouseButtonEvent::None) {
                 _gmouse_clicked_on_edge = false;
             }
         }
 
-        _gmouse_handle_event(mouseX, mouseY, mouseState);
+        _gmouse_handle_event(mouseX, mouseY, mouseEvent);
         return 0;
     }
 
@@ -767,13 +780,13 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
         break;
     case -2:
         if (1) {
-            int mouseEvent = mouseGetEvent();
+            MouseButtonEvent mouseEvent = mouseGetEvent();
             int mouseX;
             int mouseY;
             mouseGetPosition(&mouseX, &mouseY);
 
-            if ((mouseEvent & MOUSE_EVENT_LEFT_BUTTON_DOWN) != 0) {
-                if ((mouseEvent & MOUSE_EVENT_LEFT_BUTTON_REPEAT) == 0) {
+            if ((mouseEvent & MouseButtonEvent::LeftButtonDown) != MouseButtonEvent::None) {
+                if ((mouseEvent & MouseButtonEvent::LeftButtonRepeat) == MouseButtonEvent::None) {
                     if (mouseX == _scr_size.left || mouseX == _scr_size.right
                         || mouseY == _scr_size.top || mouseY == _scr_size.bottom) {
                         _gmouse_clicked_on_edge = true;
@@ -782,7 +795,7 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
                     }
                 }
             } else {
-                if ((mouseEvent & MOUSE_EVENT_LEFT_BUTTON_UP) != 0) {
+                if ((mouseEvent & MouseButtonEvent::LeftButtonUp) != MouseButtonEvent::None) {
                     _gmouse_clicked_on_edge = false;
                 }
             }
@@ -873,7 +886,7 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
                 // Pipboy not available in combat!
                 MessageListItem messageListItem;
                 char title[128];
-                strcpy(title, getmsg(&gMiscMessageList, &messageListItem, 7));
+                stringCopy(title, getmsg(&gMiscMessageList, &messageListItem, 7));
                 showDialogBox(title, nullptr, 0, 192, 116, COLOR_AMBER, nullptr, COLOR_AMBER, 0);
             } else {
                 soundPlayFile("ib1p1xx1");
@@ -903,7 +916,7 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
                 // Pipboy not available in combat!
                 MessageListItem messageListItem;
                 char title[128];
-                strcpy(title, getmsg(&gMiscMessageList, &messageListItem, 7));
+                stringCopy(title, getmsg(&gMiscMessageList, &messageListItem, 7));
                 showDialogBox(title, nullptr, 0, 192, 116, COLOR_AMBER, nullptr, COLOR_AMBER, 0);
             } else {
                 soundPlayFile("ib1p1xx1");
@@ -1022,7 +1035,7 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
             MessageList messageList;
             if (messageListInit(&messageList)) {
                 char path[COMPAT_MAX_PATH];
-                snprintf(path, sizeof(path), "%s%s", asc_5186C8, "editor.msg");
+                snprintf(path, sizeof(path), "%s%s", gGameMsgPath, "editor.msg");
 
                 if (messageListLoad(&messageList, path)) {
                     MessageListItem messageListItem;
@@ -1054,14 +1067,14 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
     case KEY_CTRL_S:
     case KEY_F4:
         soundPlayFile("ib1p1xx1");
-        if (lsgSaveGame(1) == -1) {
+        if (lsgSaveGame(LoadSaveMode::Normal) == -1) {
             debugPrint("\n ** Error calling SaveGame()! **\n");
         }
         break;
     case KEY_CTRL_L:
     case KEY_F5:
         soundPlayFile("ib1p1xx1");
-        if (lsgLoadGame(LOAD_SAVE_MODE_NORMAL) == -1) {
+        if (lsgLoadGame(LoadSaveMode::Normal) == -1) {
             debugPrint("\n ** Error calling LoadGame()! **\n");
         }
         break;
@@ -1069,7 +1082,7 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
         if (1) {
             soundPlayFile("ib1p1xx1");
 
-            int rc = lsgSaveGame(LOAD_SAVE_MODE_QUICK);
+            int rc = lsgSaveGame(LoadSaveMode::Quick);
             if (rc == -1) {
                 debugPrint("\n ** Error calling SaveGame()! **\n");
             } else if (rc == 1) {
@@ -1084,7 +1097,7 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
         if (1) {
             soundPlayFile("ib1p1xx1");
 
-            int rc = lsgLoadGame(LOAD_SAVE_MODE_QUICK);
+            int rc = lsgLoadGame(LoadSaveMode::Quick);
             if (rc == -1) {
                 debugPrint("\n ** Error calling LoadGame()! **\n");
             } else if (rc == 1) {
@@ -1277,27 +1290,29 @@ int globalVarsRead(const char* path, const char* section, int* variablesListLeng
 }
 
 // 0x443E2C
-int gameGetState()
+GameState gameGetState()
 {
     return gGameState;
 }
 
 // 0x443E34
-int gameRequestState(int newGameState)
+int gameRequestState(GameState newGameState)
 {
     switch (newGameState) {
-    case GAME_STATE_0:
-        newGameState = GAME_STATE_1;
+    case GameState::Normal:
+        newGameState = GameState::NormalPending;
         break;
-    case GAME_STATE_2:
-        newGameState = GAME_STATE_3;
+    case GameState::DialogFinished:
+        newGameState = GameState::DialogFinishedPending;
         break;
-    case GAME_STATE_4:
-        newGameState = GAME_STATE_5;
+    case GameState::DialogActive:
+        newGameState = GameState::DialogRequested;
+        break;
+    default:
         break;
     }
 
-    if (gGameState == GAME_STATE_4 && newGameState == GAME_STATE_5) {
+    if (gGameState == GameState::DialogActive && newGameState == GameState::DialogRequested) {
         return -1;
     }
 
@@ -1309,14 +1324,16 @@ int gameRequestState(int newGameState)
 void gameUpdateState()
 {
     switch (gGameState) {
-    case GAME_STATE_1:
-        gGameState = GAME_STATE_0;
+    case GameState::NormalPending:
+        gGameState = GameState::Normal;
         break;
-    case GAME_STATE_3:
-        gGameState = GAME_STATE_2;
+    case GameState::DialogFinishedPending:
+        gGameState = GameState::DialogFinished;
         break;
-    case GAME_STATE_5:
-        gGameState = GAME_STATE_4;
+    case GameState::DialogRequested:
+        gGameState = GameState::DialogActive;
+        break;
+    default:
         break;
     }
 }
@@ -1427,7 +1444,7 @@ void showHelp()
                     sharedFpsLimiter.throttle();
                 }
 
-                while (mouseGetEvent() != 0) {
+                while (mouseGetEvent() != MouseButtonEvent::None) {
                     sharedFpsLimiter.mark();
 
                     inputGetInput();
@@ -1480,7 +1497,7 @@ int showQuitConfirmationDialog()
         mouseShowCursor();
     }
 
-    int oldCursor = gameMouseGetCursor();
+    MouseCursorType oldCursor = gameMouseGetCursor();
     gameMouseSetCursor(MOUSE_CURSOR_ARROW);
 
     int rc;
@@ -1835,7 +1852,7 @@ int gameShowDeathDialog(const char* message)
         mouseShowCursor();
     }
 
-    int oldCursor = gameMouseGetCursor();
+    MouseCursorType oldCursor = gameMouseGetCursor();
     gameMouseSetCursor(MOUSE_CURSOR_ARROW);
 
     GameQuitRequest oldUserWantsToQuit = _game_user_wants_to_quit;
@@ -1884,38 +1901,38 @@ int gameSetGlobalPointer(GameGlobalVar var, void* value)
     return 0;
 }
 
-int GameMode::currentGameMode = 0;
+GameMode::Flags GameMode::currentGameMode = kNone;
 
-void GameMode::enterGameMode(int gameMode)
+void GameMode::enterGameMode(GameMode::Flags gameMode)
 {
-    int previousGameMode = currentGameMode;
-    currentGameMode |= gameMode;
+    GameMode::Flags previousGameMode = currentGameMode;
+    currentGameMode = currentGameMode | gameMode;
     if (currentGameMode != previousGameMode) {
         sfallOnGameModeChange(0, previousGameMode);
     }
 }
 
-void GameMode::exitGameMode(int gameMode)
+void GameMode::exitGameMode(GameMode::Flags gameMode)
 {
-    int previousGameMode = currentGameMode;
-    currentGameMode &= ~gameMode;
+    GameMode::Flags previousGameMode = currentGameMode;
+    currentGameMode = currentGameMode & ~gameMode;
     if (currentGameMode != previousGameMode) {
         sfallOnGameModeChange(0, previousGameMode);
     }
 }
 
 // remove game mode without triggering hooks
-void GameMode::exitGameModeQuietly(int gameMode)
+void GameMode::exitGameModeQuietly(GameMode::Flags gameMode)
 {
-    currentGameMode &= ~gameMode;
+    currentGameMode = currentGameMode & ~gameMode;
 }
 
-bool GameMode::isInGameMode(int gameMode)
+bool GameMode::isInGameMode(GameMode::Flags gameMode)
 {
-    return (currentGameMode & gameMode) != 0;
+    return (currentGameMode & gameMode) != kNone;
 }
 
-ScopedGameMode::ScopedGameMode(int gameMode)
+ScopedGameMode::ScopedGameMode(GameMode::Flags gameMode)
 {
     this->gameMode = gameMode;
     GameMode::enterGameMode(gameMode);
@@ -1928,7 +1945,7 @@ ScopedGameMode::~ScopedGameMode()
 
 void gameHandleSkilldexResult(SkilldexRC rc)
 {
-    int mode = -1;
+    GameMouseMode mode = GAME_MOUSE_MODE_INVALID;
 
     switch (rc) {
     case SKILLDEX_RC_ERROR:
@@ -1962,7 +1979,7 @@ void gameHandleSkilldexResult(SkilldexRC rc)
         break;
     }
 
-    if (mode != -1) {
+    if (mode != GAME_MOUSE_MODE_INVALID) {
         gameMouseSetCursor(MOUSE_CURSOR_USE_CROSSHAIR);
         gameMouseSetMode(mode);
     }

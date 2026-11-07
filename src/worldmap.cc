@@ -27,6 +27,7 @@
 #include "display_monitor.h"
 #include "draw.h"
 #include "game.h"
+#include "game_config.h"
 #include "game_mouse.h"
 #include "game_movie.h"
 #include "game_sound.h"
@@ -278,7 +279,7 @@ typedef struct EntranceInfo {
     int x;
     int y;
     Map map;
-    int elevation;
+    MapElevation elevation;
     int tile;
     Rotation rotation;
 } EntranceInfo;
@@ -304,7 +305,7 @@ typedef struct MapAmbientSoundEffectInfo {
 } MapAmbientSoundEffectInfo;
 
 typedef struct MapStartPointInfo {
-    int elevation;
+    MapElevation elevation;
     int tile;
     Rotation rotation;
 } MapStartPointInfo;
@@ -559,7 +560,7 @@ static int wmMapSlotInit(MapInfo* map);
 static int wmMapInit();
 static int wmRStartSlotInit(MapStartPointInfo* rsp);
 static int wmMatchEntranceFromMap(City areaIdx, Map mapIdx, int* entranceIdxPtr);
-static int wmMatchEntranceElevFromMap(City areaIdx, Map mapIdx, int elevation, int* entranceIdxPtr);
+static int wmMatchEntranceElevFromMap(City areaIdx, Map mapIdx, MapElevation elevation, int* entranceIdxPtr);
 static int wmMatchAreaFromMap(Map mapIdx, City* areaIdxPtr);
 static int wmWorldMapFunc(int a1);
 static int wmInterfaceCenterOnParty();
@@ -623,11 +624,8 @@ static int wmTabsCompareNames(const void* a1, const void* a2);
 static int wmFreeTabsLabelList(int** quickDestinationsListPtr, int* quickDestinationsLengthPtr);
 static void wmRefreshInterfaceDial(bool shouldRefreshWindow);
 static void wmInterfaceDialSyncTime(bool shouldRefreshWindow);
-static int wmAreaFindFirstValidMap(Map* mapIdxPtr, int* elevationPtr, int* tilePtr, Rotation* rotationPtr);
+static int wmAreaFindFirstValidMap(Map* mapIdxPtr, MapElevation* elevationPtr, int* tilePtr, Rotation* rotationPtr);
 static void wmRunLocalMapEnterHook(Map* mapIdxPtr);
-static void wmFadeOut();
-static void wmFadeIn();
-static void wmFadeReset();
 static void wmBlinkRndEncounterIcon(bool special);
 
 // 0x4BC860 can_rest_here
@@ -968,7 +966,20 @@ const char* wmGetCurrentTerrainName()
         return "Error";
     }
 
-    return wmGetTerrainName(x, y);
+    const char* override = wmGetTerrainNameOverride(x, y);
+    if (override != nullptr) {
+        return override;
+    }
+
+    // Walking caches the subtile before moving, which is what sfall's
+    // get_current_terrain_name reads.
+    SubtileInfo* subtile = wmGenData.currentSubtile;
+    if (subtile == nullptr && wmFindCurSubTileFromPos(wmGenData.worldPosX, wmGenData.worldPosY, &subtile) == -1) {
+        return "Error";
+    }
+
+    MessageListItem messageListItem;
+    return getmsg(&wmMsgFile, &messageListItem, 1000 + subtile->terrain);
 }
 
 void wmSetTownTitle(City areaIdx, const char* title)
@@ -1029,7 +1040,6 @@ static bool townMapHotkeysFix;
 static double gameTimeIncRemainder = 0.0;
 static FrmImage _backgroundFrmImage;
 static FrmImage _townFrmImage;
-static bool wmFaded = false;
 static Map wmForceEncounterMapId = MAP_INVALID;
 static EncounterFlag wmForceEncounterFlags = ENCOUNTER_FLAG_NONE;
 static bool wmEncounterDetectionEnabled = true;
@@ -1108,20 +1118,8 @@ static void wmSetFlags(MapFlags* flagsPtr, MapFlags flag, bool set)
     }
 }
 
-int wmMaxMapIndex()
-{
-    return wmMaxMapNum - 1;
-}
-
-int wmMaxAreaIndex()
-{
-    return wmMaxAreaNum - 1;
-}
-
 // CE: Extracted from wmMapInit to support modular config loading.
-// Arg `startMapIdx` is temporary and only serves illustration purposes
-// likely to be removed when API is finalized
-int wmParseMapsConfig(Config* cfg, int startMapIdx)
+int wmParseMapsConfig(Config* cfg, bool reindex)
 {
     if (cfg == nullptr) return -1;
 
@@ -1130,12 +1128,7 @@ int wmParseMapsConfig(Config* cfg, int startMapIdx)
     MapInfo* maps;
     MapInfo* map;
 
-    if (startMapIdx < static_cast<int>(MAP_FIRST) || startMapIdx != wmMaxMapNum) {
-        debugPrint("wmParseMapsConfig: startMapIdx %d does not match next map slot %d", startMapIdx, wmMaxMapNum);
-        return -1;
-    }
-
-    Map mapIdx = static_cast<Map>(startMapIdx);
+    Map mapIdx = static_cast<Map>(reindex ? MAP_FIRST : wmMaxMapNum);
     int loop_safety_counter = 0;
 
     while (loop_safety_counter < 5000) {
@@ -1165,12 +1158,9 @@ int wmParseMapsConfig(Config* cfg, int startMapIdx)
             exit(1);
         }
 
-        char mapFileName[40];
-        strncpy(mapFileName, str, sizeof(mapFileName) - 1);
-        mapFileName[sizeof(mapFileName) - 1] = '\0';
-        compat_strlwr(mapFileName);
-        strncpy(map->mapFileName, mapFileName, sizeof(map->mapFileName));
+        strncpy(map->mapFileName, str, sizeof(map->mapFileName) - 1);
         map->mapFileName[sizeof(map->mapFileName) - 1] = '\0';
+        compat_strlwr(map->mapFileName);
 
         if (configGetString(cfg, section, "music", &str)) {
             strncpy(map->music, str, 40);
@@ -1252,7 +1242,9 @@ int wmParseMapsConfig(Config* cfg, int startMapIdx)
                 return -1;
             }
 
-            automapSetDisplayMap(mapIdx, num);
+            // automap has a fixed capacity of 160
+            // TODO: exapand capacity, introduce external sources support to automap
+            if (!reindex) automapSetDisplayMap(mapIdx, num);
         }
 
         if (configGetString(cfg, section, "random_start_point_0", &str)) {
@@ -1268,7 +1260,7 @@ int wmParseMapsConfig(Config* cfg, int startMapIdx)
                     // NOTE: Uninline.
                     wmRStartSlotInit(rsp);
 
-                    strParseIntWithKey(&str, "elev", &(rsp->elevation), ":");
+                    strParseEnumWithKey<MapElevation>(&str, "elev", &(rsp->elevation), ":");
                     strParseIntWithKey(&str, "tile_num", &(rsp->tile), ":");
 
                     map->startPointsLength++;
@@ -1291,9 +1283,7 @@ int wmParseMapsConfig(Config* cfg, int startMapIdx)
 }
 
 // CE: Extracted from wmAreaInit to support modular config loading.
-// Arg `startAreaIdx` is temporary and only serves illustration purposes
-// likely to be removed when API is finalized
-int wmParseAreasConfig(Config* cfg, int startAreaIdx)
+int wmParseAreasConfig(Config* cfg, bool reindex)
 {
     if (cfg == nullptr) return -1;
 
@@ -1304,12 +1294,7 @@ int wmParseAreasConfig(Config* cfg, int startAreaIdx)
     CityInfo* city;
     EntranceInfo* entrance;
 
-    if (startAreaIdx < static_cast<int>(CITY_FIRST) || startAreaIdx != wmMaxAreaNum) {
-        debugPrint("wmParseAreasConfig: startAreaIdx %d does not match next area slot %d", startAreaIdx, wmMaxAreaNum);
-        return -1;
-    }
-
-    City area_idx = static_cast<City>(startAreaIdx);
+    City area_idx = static_cast<City>(reindex ? CITY_FIRST : wmMaxAreaNum);
     InterfaceFrameId frameId;
 
     int loop_safety_counter = 0;
@@ -1334,7 +1319,7 @@ int wmParseAreasConfig(Config* cfg, int startAreaIdx)
         // NOTE: Uninline.
         wmAreaSlotInit(city);
 
-        city->areaId = City(area_idx);
+        city->areaId = City(wmMaxAreaNum - 1);
 
         InterfaceFrmId frmId = InterfaceFrameId::Invalid;
         if (frameId != InterfaceFrameId::Invalid) {
@@ -1424,7 +1409,7 @@ int wmParseAreasConfig(Config* cfg, int startAreaIdx)
                 return -1;
             }
 
-            if (strParseInt(&str, &(entrance->elevation)) == -1) {
+            if (strParseEnum<MapElevation>(&str, &(entrance->elevation)) == -1) {
                 return -1;
             }
 
@@ -1465,7 +1450,7 @@ int wmWorldMap_init()
         return -1;
     }
 
-    snprintf(path, sizeof(path), "%s%s", asc_5186C8, "worldmap.msg");
+    snprintf(path, sizeof(path), "%s%s", gGameMsgPath, "worldmap.msg");
 
     if (!messageListLoad(&wmMsgFile, path)) {
         return -1;
@@ -2391,7 +2376,7 @@ static int wmReadEncBaseType(char* name, int* valuePtr)
 
             for (int index = 0; index < encounter->entriesLength; index++) {
                 EncounterEntry* encounterEntry = &(encounter->entries[index]);
-                if (objectTypeFromPid(encounterEntry->pid) == OBJ_TYPE_CRITTER) {
+                if (ProtoId(encounterEntry->pid).objectType() == OBJ_TYPE_CRITTER) {
                     encounterEntry->team = team;
                 }
             }
@@ -2432,7 +2417,7 @@ static int wmParseEncBaseSubTypeStr(EncounterEntry* encounterEntry, char** strin
 
     strParseIntWithKey(&string, "pid", &(encounterEntry->pid), ":");
     if (encounterEntry->pid == 0) {
-        encounterEntry->pid = -1;
+        encounterEntry->pid = ProtoId::kEmptyPid;
     }
 
     strParseIntWithKey(&string, "distance", &(encounterEntry->distance), ":");
@@ -2474,7 +2459,7 @@ static int wmEncBaseSubTypeSlotInit(EncounterEntry* encounterEntry)
     encounterEntry->field_28 = -1;
     encounterEntry->ratioMode = ENCOUNTER_RATIO_MODE_SINGLE;
     encounterEntry->ratio = 100;
-    encounterEntry->pid = -1;
+    encounterEntry->pid = ProtoId::kEmptyPid;
     encounterEntry->flags = ENCOUNTER_SUBINFO_NONE;
     encounterEntry->distance = 0;
     encounterEntry->tile = -1;
@@ -3123,7 +3108,7 @@ static int wmAreaInit()
     }
 
     if (configRead(cfg.get(), "data\\city.txt", true)) {
-        if (wmParseAreasConfig(cfg.get(), static_cast<int>(CITY_FIRST)) == -1) {
+        if (wmParseAreasConfig(cfg.get()) == -1) {
             return -1;
         }
     }
@@ -3157,7 +3142,7 @@ static int wmEntranceSlotInit(EntranceInfo* entrance)
     entrance->x = 0;
     entrance->y = 0;
     entrance->map = MAP_INVALID;
-    entrance->elevation = 0;
+    entrance->elevation = ELEVATION_FIRST;
     entrance->tile = 0;
     entrance->rotation = ROTATION_NE;
 
@@ -3188,7 +3173,7 @@ static int wmMapInit()
     }
 
     if (configRead(config.get(), "data\\maps.txt", true)) {
-        if (wmParseMapsConfig(config.get(), static_cast<int>(MAP_FIRST)) == -1) {
+        if (wmParseMapsConfig(config.get()) == -1) {
             return -1;
         }
     }
@@ -3201,7 +3186,7 @@ static int wmMapInit()
 // 0x4BF954 wmRStartSlotInit
 static int wmRStartSlotInit(MapStartPointInfo* rsp)
 {
-    rsp->elevation = 0;
+    rsp->elevation = ELEVATION_FIRST;
     rsp->tile = -1;
     rsp->rotation = ROTATION_INVALID;
 
@@ -3362,14 +3347,14 @@ static int wmMatchEntranceFromMap(City areaIdx, Map mapIdx, int* entranceIdxPtr)
 }
 
 // 0x4BFBE8 wmMatchEntranceElevFromMap
-static int wmMatchEntranceElevFromMap(City areaIdx, Map mapIdx, int elevation, int* entranceIdxPtr)
+static int wmMatchEntranceElevFromMap(City areaIdx, Map mapIdx, MapElevation elevation, int* entranceIdxPtr)
 {
     CityInfo* city = &(wmAreaInfoList[areaIdx]);
 
     for (int entranceIdx = 0; entranceIdx < city->entrancesLength; entranceIdx++) {
         EntranceInfo* entrance = &(city->entrances[entranceIdx]);
         if (entrance->map == mapIdx) {
-            if (elevation == -1 || entrance->elevation == -1 || elevation == entrance->elevation) {
+            if (elevation == ELEVATION_INVALID || entrance->elevation == ELEVATION_INVALID || elevation == entrance->elevation) {
                 *entranceIdxPtr = entranceIdx;
                 return 0;
             }
@@ -3402,7 +3387,7 @@ static int wmMatchAreaFromMap(Map mapIdx, City* areaIdxPtr)
 // Mark map entrance.
 //
 // 0x4BFD50 wmMapMarkMapEntranceState
-int wmMapMarkMapEntranceState(Map mapIdx, int elevation, int state)
+int wmMapMarkMapEntranceState(Map mapIdx, MapElevation elevation, int state)
 {
     if (!mapIsValid(mapIdx)) {
         return -1;
@@ -3498,7 +3483,7 @@ static int wmWorldMapFunc(int a1)
             break;
         }
 
-        int mouseEvent = mouseGetEvent();
+        MouseButtonEvent mouseEvent = mouseGetEvent();
 
         if (wmGenData.isWalking && wmTravelTickDue(now)) {
             wmPartyWalkingStep();
@@ -3602,7 +3587,7 @@ static int wmWorldMapFunc(int a1)
             }
         }
 
-        if ((mouseEvent & MOUSE_EVENT_LEFT_BUTTON_DOWN) != 0 && (mouseEvent & MOUSE_EVENT_LEFT_BUTTON_REPEAT) == 0) {
+        if ((mouseEvent & MouseButtonEvent::LeftButtonDown) != MouseButtonEvent::None && (mouseEvent & MouseButtonEvent::LeftButtonRepeat) == MouseButtonEvent::None) {
             if (mouseHitTestInWindow(wmBkWin, WM_VIEW_X, WM_VIEW_Y, WM_VIEW_WIDTH + WM_VIEW_X, WM_VIEW_HEIGHT + WM_VIEW_Y)) {
                 if (!wmGenData.isWalking && !mousePressed && abs(wmGenData.worldPosX - worldX) < 5 && abs(wmGenData.worldPosY - worldY) < 5) {
                     mousePressed = true;
@@ -3615,7 +3600,7 @@ static int wmWorldMapFunc(int a1)
             }
         }
 
-        if ((mouseEvent & MOUSE_EVENT_LEFT_BUTTON_UP) != 0) {
+        if ((mouseEvent & MouseButtonEvent::LeftButtonUp) != MouseButtonEvent::None) {
             if (mousePressed) {
                 mousePressed = false;
                 wmInterfaceRefresh();
@@ -3629,7 +3614,7 @@ static int wmWorldMapFunc(int a1)
                                 break;
                             }
                         } else {
-                            int elevation;
+                            MapElevation elevation;
                             int tile;
                             Rotation rotation;
                             if (wmAreaFindFirstValidMap(&map, &elevation, &tile, &rotation) == -1) {
@@ -3731,14 +3716,9 @@ static int wmWorldMapFunc(int a1)
                 CityInfo* city = &(wmAreaInfoList[areaIdx]);
                 if (wmAreaIsKnown(city->areaId)) {
                     if (wmGenData.currentAreaId != areaIdx) {
-                        // SFALL: Fix the position of the destination marker for
-                        // small/medium location circles.
-                        // CE: Fix is slightly different. `wmPartyInitWalking`
-                        // assumes x/y are compensated for worldmap viewport
-                        // offset (as can be seen earlier in this function).
-                        CitySizeDescription* citySizeDescription = &(wmSphereData[city->size]);
-                        int destX = city->x + citySizeDescription->frmImage.getWidth() / 2 - WM_VIEW_X;
-                        int destY = city->y + citySizeDescription->frmImage.getHeight() / 2 - WM_VIEW_Y;
+                        int destX;
+                        int destY;
+                        wmAreaGetMarkWorldPos(city, &destX, &destY);
                         wmPartyInitWalking(destX, destY);
                         mousePressed = 0;
                     }
@@ -3746,7 +3726,7 @@ static int wmWorldMapFunc(int a1)
             }
         }
 
-        if ((mouseEvent & MOUSE_EVENT_WHEEL) != 0) {
+        if ((mouseEvent & MouseButtonEvent::Wheel) != MouseButtonEvent::None) {
             int wheelX;
             int wheelY;
             mouseGetWheel(&wheelX, &wheelY);
@@ -3774,11 +3754,9 @@ static int wmWorldMapFunc(int a1)
     }
 
     if (wmInterfaceExit() == -1) {
-        wmFadeReset();
+        paletteSetEntries(_cmap);
         return -1;
     }
-
-    wmFadeIn();
 
     return rc;
 }
@@ -3875,7 +3853,9 @@ static int wmRndEncounterOccurred(Map* mapToLoadPtr)
 
         // For unknown reason fadeout and blinking icon are mutually exclusive.
         if ((wmForceEncounterFlags & ENCOUNTER_FLAG_FADEOUT) != ENCOUNTER_FLAG_NONE) {
-            wmFadeOut();
+            // Match sfall: leave the encounter screen black on worldmap exit.
+            // Its script is responsible for the next fade in.
+            paletteFadeTo(gPaletteBlack);
         } else if ((wmForceEncounterFlags & ENCOUNTER_FLAG_NO_ICON) == ENCOUNTER_FLAG_NONE) {
             bool special = (wmForceEncounterFlags & ENCOUNTER_FLAG_ICON_SP) != ENCOUNTER_FLAG_NONE;
             wmBlinkRndEncounterIcon(special);
@@ -3912,6 +3892,8 @@ static int wmRndEncounterOccurred(Map* mapToLoadPtr)
             break;
         case GAME_DIFFICULTY_HARD:
             frequency += modifier;
+            break;
+        case GAME_DIFFICULTY_NORMAL:
             break;
         }
     }
@@ -3980,7 +3962,7 @@ static int wmRndEncounterOccurred(Map* mapToLoadPtr)
     if (wmEncounterDetectionEnabled) {
         if (frequency > chance) {
             int outdoorsman = partyGetBestSkillValue(SKILL_OUTDOORSMAN);
-            Object* scanner = objectGetCarriedObjectByPid(gDude, PROTO_ID_MOTION_SENSOR);
+            Object* scanner = objectGetCarriedObjectByProtoId(gDude, ItemProtoTypeId::MotionSensor);
             if (scanner != nullptr) {
                 if (gDude == scanner->owner) {
                     outdoorsman += 20;
@@ -4159,6 +4141,8 @@ static int wmRndEncounterPick()
             chance = 0;
         }
         break;
+    case GAME_DIFFICULTY_NORMAL:
+        break;
     }
 
     int index;
@@ -4334,7 +4318,7 @@ static int wmSetupCritterObjs(int encounterIndex, Object** critterPtr, int critt
     for (int index = 0; index < encounter->entriesLength; index++) {
         EncounterEntry* encounterEntry = &(encounter->entries[index]);
 
-        if (encounterEntry->pid == -1) {
+        if (ProtoId(encounterEntry->pid) == ProtoId::Empty()) {
             continue;
         }
 
@@ -4365,23 +4349,23 @@ static int wmSetupCritterObjs(int encounterIndex, Object** critterPtr, int critt
                 continue;
             }
 
-            if (encounterEntry->pid == -1) {
+            if (ProtoId(encounterEntry->pid) == ProtoId::Empty()) {
                 continue;
             }
 
             Object* object;
-            if (objectCreateWithPid(&object, encounterEntry->pid) == -1) {
+            if (objectCreateWithProtoId(&object, ProtoId(encounterEntry->pid)) == -1) {
                 return -1;
             }
 
             if (*critterPtr == nullptr) {
-                if (objectTypeFromPid(encounterEntry->pid) == OBJ_TYPE_CRITTER) {
+                if (ProtoId(encounterEntry->pid).objectType() == OBJ_TYPE_CRITTER) {
                     *critterPtr = object;
                 }
             }
 
             if (encounterEntry->team != -1) {
-                if (objectTypeFromPid(object->pid) == OBJ_TYPE_CRITTER) {
+                if (ProtoId(object).objectType() == OBJ_TYPE_CRITTER) {
                     object->data.critter.combat.team = encounterEntry->team;
                 }
             }
@@ -4398,7 +4382,7 @@ static int wmSetupCritterObjs(int encounterIndex, Object** critterPtr, int critt
             if (encounter->position != ENCOUNTER_FORMATION_TYPE_SURROUNDING) {
                 objectSetLocation(object, tile, gElevation, nullptr);
             } else {
-                objectAttemptPlacement(object, tile, 0, 0);
+                objectAttemptPlacement(object, tile, ELEVATION_FIRST, 0);
             }
 
             Rotation rotation = tileGetRotationTo(tile, gDude->tile);
@@ -4419,11 +4403,12 @@ static int wmSetupCritterObjs(int encounterIndex, Object** critterPtr, int critt
                 }
 
                 Object* item;
-                if (objectCreateWithPid(&item, encounterItem->pid) == -1) {
+                const ProtoId protoId = ProtoId(encounterItem->pid);
+                if (objectCreateWithProtoId(&item, protoId) == -1) {
                     return -1;
                 }
 
-                if (encounterItem->pid == PROTO_ID_MONEY) {
+                if (protoId == ItemProtoTypeId::Money) {
                     if (perkHasRank(gDude, PERK_FORTUNE_FINDER)) {
                         quantity *= 2;
                     }
@@ -5038,7 +5023,7 @@ static int wmInterfaceInit()
     const char* backgroundSoundFileName = gameSoundGetMusicOverride(
         wmGenData.isInCar ? "worldmap_car_music" : "worldmap_music",
         wmGenData.isInCar ? "20car" : "23world");
-    _gsound_background_play_level_music(backgroundSoundFileName, GSOUND_LIMIT_AFTER);
+    _gsound_background_play_level_music(backgroundSoundFileName, GameSoundReadLimitMode::LimitAfter);
 
     // CE: Hide entire interface, not just indicator bar, and disable tile
     // engine.
@@ -5503,8 +5488,8 @@ static void wmMouseBkProc()
         dy = -1;
     }
 
-    int oldMouseCursor = gameMouseGetCursor();
-    int newMouseCursor = oldMouseCursor;
+    MouseCursorType oldMouseCursor = gameMouseGetCursor();
+    MouseCursorType newMouseCursor = oldMouseCursor;
 
     if (dx != 0 || dy != 0) {
         if (dx > 0) {
@@ -5539,7 +5524,7 @@ static void wmMouseBkProc()
         }
 
         if (!couldScroll) {
-            newMouseCursor += 8;
+            newMouseCursor = newMouseCursor + MOUSE_CURSOR_SCROLL_OFFSET_INVALID;
         }
     } else {
         if (oldMouseCursor != MOUSE_CURSOR_ARROW) {
@@ -6693,11 +6678,9 @@ static int wmTownMapFunc(Map* mapIdxPtr)
                     }
 
                     if (areaIdx != wmGenData.currentAreaId) {
-                        // CE: Fix incorrect destination positioning. See
-                        // `wmWorldMapFunc` for explanation.
-                        CitySizeDescription* citySizeDescription = &(wmSphereData[city->size]);
-                        int destX = city->x + citySizeDescription->frmImage.getWidth() / 2 - WM_VIEW_X;
-                        int destY = city->y + citySizeDescription->frmImage.getHeight() / 2 - WM_VIEW_Y;
+                        int destX;
+                        int destY;
+                        wmAreaGetMarkWorldPos(city, &destX, &destY);
                         wmPartyInitWalking(destX, destY);
 
                         mousePressed = false;
@@ -7403,15 +7386,15 @@ static void wmRunLocalMapEnterHook(Map* mapIdxPtr)
     Map originalMap = *mapIdxPtr;
     scriptHooks_Encounter(EncounterHookEventType::LocalMapEnter, mapIdxPtr, false, -1, -1);
     if (*mapIdxPtr != originalMap) {
-        mapSetEnteringLocation(-1, -1, ROTATION_INVALID);
+        mapSetEnteringLocation(ELEVATION_INVALID, -1, ROTATION_INVALID);
     }
 }
 
 // 0x4C5804 wmAreaFindFirstValidMap
-static int wmAreaFindFirstValidMap(Map* mapIdxPtr, int* elevationPtr, int* tilePtr, Rotation* rotationPtr)
+static int wmAreaFindFirstValidMap(Map* mapIdxPtr, MapElevation* elevationPtr, int* tilePtr, Rotation* rotationPtr)
 {
     *mapIdxPtr = MAP_INVALID;
-    *elevationPtr = -1;
+    *elevationPtr = ELEVATION_INVALID;
     *tilePtr = -1;
     *rotationPtr = ROTATION_INVALID;
 
@@ -7424,24 +7407,31 @@ static int wmAreaFindFirstValidMap(Map* mapIdxPtr, int* elevationPtr, int* tileP
         return -1;
     }
 
+    EntranceInfo* entrance = nullptr;
     for (int index = 0; index < city->entrancesLength; index++) {
-        EntranceInfo* entrance = &(city->entrances[index]);
-        if (entrance->state != 0) {
-            *mapIdxPtr = entrance->map;
-            *elevationPtr = entrance->elevation;
-            *tilePtr = entrance->tile;
-            *rotationPtr = entrance->rotation;
-            return 0;
+        if (city->entrances[index].state != 0) {
+            entrance = &(city->entrances[index]);
+            break;
         }
     }
 
-    EntranceInfo* entrance = &(city->entrances[0]);
-    entrance->state = 1;
+    if (entrance == nullptr) {
+        entrance = &(city->entrances[0]);
+        entrance->state = 1;
+    }
 
     *mapIdxPtr = entrance->map;
-    *elevationPtr = entrance->elevation;
-    *tilePtr = entrance->tile;
-    *rotationPtr = entrance->rotation;
+
+    // CE: An entrance without a tile enters at the map's own start, as the
+    // original did (it only took the map here). Golgotha and the whale
+    // encounter in city.txt have elevation 0 with tile -1, and the map
+    // failed to load with it (an empty map).
+    if (entrance->tile != -1) {
+        *elevationPtr = entrance->elevation;
+        *tilePtr = entrance->tile;
+        *rotationPtr = entrance->rotation;
+    }
+
     return 0;
 }
 
@@ -7459,7 +7449,7 @@ int wmMapMusicStart()
             break;
         }
 
-        if (_gsound_background_play_level_music(map->music, GSOUND_LIMIT_AFTER) == -1) {
+        if (_gsound_background_play_level_music(map->music, GameSoundReadLimitMode::LimitAfter) == -1) {
             break;
         }
 
@@ -7523,55 +7513,17 @@ int wmTeleportToArea(City areaIdx)
         return -1;
     }
 
+    if (wmGenData.currentAreaId != areaIdx) {
+        CityInfo* city = &(wmAreaInfoList[areaIdx]);
+        wmAreaGetMarkWorldPos(city, &wmGenData.worldPosX, &wmGenData.worldPosY);
+    }
+
     wmGenData.currentAreaId = areaIdx;
     wmGenData.walkDestinationX = 0;
     wmGenData.walkDestinationY = 0;
     wmGenData.isWalking = false;
 
-    CityInfo* city = &(wmAreaInfoList[areaIdx]);
-
-    // SFALL: Fix for incorrect positioning after exiting small/medium
-    // locations.
-    // CE: See `wmWorldMapFunc` for explanation.
-    CitySizeDescription* citySizeDescription = &(wmSphereData[city->size]);
-
-    // CE: This function might be called outside |wmWorldmapFunc|, so it's
-    // image might not be locked.
-    bool wasLocked = citySizeDescription->frmImage.isLocked();
-    if (!wasLocked) {
-        citySizeDescription->frmImage.lock(FrmId(citySizeDescription->fid));
-    }
-
-    wmGenData.worldPosX = city->x + citySizeDescription->frmImage.getWidth() / 2 - WM_VIEW_X;
-    wmGenData.worldPosY = city->y + citySizeDescription->frmImage.getHeight() / 2 - WM_VIEW_Y;
-
-    if (!wasLocked) {
-        citySizeDescription->frmImage.unlock();
-    }
-
     return 0;
-}
-
-void wmFadeOut()
-{
-    if (!wmFaded) {
-        paletteFadeTo(gPaletteBlack);
-        wmFaded = true;
-    }
-}
-
-void wmFadeIn()
-{
-    if (wmFaded) {
-        paletteFadeTo(_cmap);
-        wmFaded = false;
-    }
-}
-
-void wmFadeReset()
-{
-    wmFaded = false;
-    paletteSetEntries(_cmap);
 }
 
 void wmBlinkRndEncounterIcon(bool special)

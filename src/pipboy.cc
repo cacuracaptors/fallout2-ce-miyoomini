@@ -231,13 +231,14 @@ static void pipboyWindowHandleStatus(int userInput);
 static void pipboyWindowRenderQuestLocationList(int a1);
 static void pipboyWindowQuestList(int a1);
 static void pipboyRenderHolodiskText();
+static void pipboyPlayHolodiskAudio();
 static int pipboyWindowRenderHolodiskList(int a1);
 static int _qscmp(const void* a1, const void* a2);
 static void pipboyWindowHandleAutomaps(int a1);
 static int _PrintAMelevList(int a1);
 static int _PrintAMList(int a1);
-static void pipboyHandleVideoArchive(int a1);
-static int pipboyRenderVideoArchive(int a1);
+static void pipboyHandleVideoArchive(int eventCode);
+static int pipboyRenderVideoArchive(int selectedEntry);
 static void pipboyHandleAlarmClock(int eventCode);
 static void pipboyWindowRenderRestOptions(int a1);
 static void pipboyDrawHitPoints();
@@ -413,6 +414,8 @@ int gPipboyCurrentLine;
 // 0x664518 rest_time
 int _rest_time;
 
+static int restHealTime = 180;
+
 // 0x66451C amcty_indx
 Map _amcty_indx;
 
@@ -455,6 +458,9 @@ void handlePipboyPageNavigation(
     void (*updatePage)(void));
 
 static int gPipboyPrevTab;
+
+// Nesting depth of `pipboyRest` (it calls itself for the heal options).
+static int pipboyRestDepth = 0;
 
 static int totalPages; // for tracking between pipboyWindowHandleAutomaps and _PrintAMelevList/_PrintAMList and others for pagination
 
@@ -577,6 +583,9 @@ int pipboyOpen(int intent)
             // (alarm clock in particular) can fallback if something goes wrong.
             gPipboyPrevTab = gPipboyTab;
 
+            // Switching tabs leaves the holodisk, so stop its narration.
+            pipboySoundStop();
+
             gPipboyTab = keyCode - 500;
             _view_page_automap_main = 0; // ensures button click to automaps renders first page
             _view_page_quest = 0; // ensures button click to status renders first page
@@ -612,7 +621,7 @@ int pipboyMessageListInit()
     pipboyMessageListFree();
 
     char path[COMPAT_MAX_PATH];
-    snprintf(path, sizeof(path), "%s%s", asc_5186C8, "pipboy.msg");
+    snprintf(path, sizeof(path), "%s%s", gGameMsgPath, "pipboy.msg");
 
     if (!(messageListLoad(&gPipboyMessageList, path))) {
         return -1;
@@ -843,6 +852,8 @@ static int pipboyWindowInit(int intent)
 // 0x497828
 static void pipboyWindowFree()
 {
+    pipboySoundStop();
+
     if (settings.debug.show_script_messages) {
         debugPrint("\nScript <Map Update>");
     }
@@ -901,6 +912,7 @@ static void _pip_init_()
 // pip_init
 void pipboyInit()
 {
+    restHealTime = 180;
     pipboyRestOptionsReset();
     _pip_init_();
 }
@@ -908,8 +920,16 @@ void pipboyInit()
 // NOTE: Uncollapsed 0x497918.
 void pipboyReset()
 {
+    restHealTime = 180;
     pipboyRestOptionsReset();
     _pip_init_();
+}
+
+void pipboySetRestHealTime(int minutes)
+{
+    if (minutes > 0) {
+        restHealTime = minutes;
+    }
 }
 
 // 0x49791C
@@ -1039,6 +1059,12 @@ int pipboyLoad(File* stream)
     return _save_pipboy(stream);
 }
 
+// True while the alarm clock is passing time.
+bool pipboyIsResting()
+{
+    return pipboyRestDepth > 0;
+}
+
 int pipboyGetWindow()
 {
     return windowGetWindow(gPipboyWindow) != nullptr ? gPipboyWindow : -1;
@@ -1061,6 +1087,8 @@ static void pipboyWindowHandleStatus(int userInput)
 
         _holo_flag = 0;
         _holodisk = -1;
+        // Back to the holodisk list, so stop the narration.
+        pipboySoundStop();
         gPipboyWindowHolodisksCount = 0;
         _view_page = 0;
         _view_page_questlist = 0;
@@ -1168,6 +1196,7 @@ static void pipboyWindowHandleStatus(int userInput)
                 inputPauseForTocks(200);
                 pipboyWindowDestroyButtons();
                 pipboyRenderHolodiskText();
+                pipboyPlayHolodiskAudio();
                 _holo_flag = 1;
             }
         }
@@ -1511,7 +1540,7 @@ static void pipboyRenderHolodiskText()
     if (_view_page != 0) {
         int page = 0;
         int numberOfLines = 0;
-        for (; holodiskTextId < holodiskTextId + 500; holodiskTextId += 1) {
+        for (; holodiskTextId < holodisk->description + 500; holodiskTextId += 1) {
             const char* line = getmsg(&gPipboyMessageList, &gPipboyMessageListItem, holodiskTextId);
             if (strcmp(line, "**END-DISK**") == 0) {
                 debugPrint("\nPIPBOY: Premature page end in holodisk page search!\n");
@@ -1566,6 +1595,24 @@ static void pipboyRenderHolodiskText()
     renderNavigationButtons(_view_page, gPipboyHolodiskLastPage + 1, true);
 
     windowRefresh(gPipboyWindow);
+}
+
+// Plays the voiced narration attached to the holodisk's title entry in
+// pipboy.msg, if it has one. Turning pages keeps it playing, opening another
+// holodisk or closing the Pip-Boy stops it.
+static void pipboyPlayHolodiskAudio()
+{
+    pipboySoundStop();
+
+    MessageListItem messageListItem;
+    messageListItem.num = gHolodiskDescriptions[_holodisk].name;
+    if (!messageListGetItem(&gPipboyMessageList, &messageListItem)) {
+        return;
+    }
+
+    if (messageListItem.audio != nullptr && messageListItem.audio[0] != '\0') {
+        pipboySoundPlay(messageListItem.audio);
+    }
 }
 
 // 0x498C40
@@ -1690,7 +1737,7 @@ static void pipboyWindowHandleAutomaps(int userInput)
             _amcty_indx = static_cast<Map>(_sortlist[realIndex].mapOrElevation);
             _map_count = _PrintAMelevList(1);
             pipboyWindowCreateButtons(0, _map_count + 2, true); // create buttons for sub-locations (elevation), and back/more
-            automapRenderInPipboyWindow(gPipboyWindow, _sortlist[0].map, _sortlist[0].mapOrElevation);
+            automapRenderInPipboyWindow(gPipboyWindow, _sortlist[0].map, static_cast<MapElevation>(_sortlist[0].mapOrElevation));
             windowRefreshRect(gPipboyWindow, &gPipboyWindowContentRect);
             main_sub_mode = 1;
         }
@@ -1710,7 +1757,7 @@ static void pipboyWindowHandleAutomaps(int userInput)
                     _PrintAMelevList(1);
                     _map_count = _PrintAMelevList(1);
                     pipboyWindowCreateButtons(0, _map_count + 2, true); // create buttons for sub-locations (elevation), and back/more
-                    automapRenderInPipboyWindow(gPipboyWindow, _sortlist[0].map, _sortlist[0].mapOrElevation);
+                    automapRenderInPipboyWindow(gPipboyWindow, _sortlist[0].map, static_cast<MapElevation>(_sortlist[0].mapOrElevation));
                     windowRefreshRect(gPipboyWindow, &gPipboyWindowContentRect);
                 });
         }
@@ -1718,7 +1765,7 @@ static void pipboyWindowHandleAutomaps(int userInput)
         if (userInput >= 1 && userInput <= _map_count + 3) {
             soundPlayFile("ib1p1xx1");
             _PrintAMelevList(userInput);
-            automapRenderInPipboyWindow(gPipboyWindow, _sortlist[userInput - 1].map, _sortlist[userInput - 1].mapOrElevation);
+            automapRenderInPipboyWindow(gPipboyWindow, _sortlist[userInput - 1].map, static_cast<MapElevation>(_sortlist[userInput - 1].mapOrElevation));
             windowRefreshRect(gPipboyWindow, &gPipboyWindowContentRect);
         }
 
@@ -1743,7 +1790,7 @@ static int _PrintAMelevList(int selectedMap)
     }
 
     // First pass: Count total valid entries
-    for (int elevation = 0; elevation < ELEVATION_COUNT; elevation++) {
+    for (MapElevation elevation = ELEVATION_FIRST; elevation < ELEVATION_COUNT; elevation++) {
         if (automapHeader->offsets[_amcty_indx][elevation] > 0) {
             totalEntries++;
         }
@@ -1754,7 +1801,7 @@ static int _PrintAMelevList(int selectedMap)
             continue;
         }
 
-        for (int elevation = 0; elevation < ELEVATION_COUNT; elevation++) {
+        for (MapElevation elevation = ELEVATION_FIRST; elevation < ELEVATION_COUNT; elevation++) {
             if (automapHeader->offsets[map][elevation] > 0) {
                 totalEntries++;
             }
@@ -1773,7 +1820,7 @@ static int _PrintAMelevList(int selectedMap)
     int currentIndex = 0;
 
     // Second pass: Build the list for the selected page
-    for (int elevation = 0; elevation < ELEVATION_COUNT && elevationsListSize < maxEntriesPerPage; elevation++) {
+    for (MapElevation elevation = ELEVATION_FIRST; elevation < ELEVATION_COUNT && elevationsListSize < maxEntriesPerPage; elevation++) {
         if (automapHeader->offsets[_amcty_indx][elevation] > 0) {
             if (currentIndex >= startIndex && currentIndex < endIndex) {
                 _sortlist[elevationsListSize].name = mapGetName(_amcty_indx, elevation);
@@ -1790,7 +1837,7 @@ static int _PrintAMelevList(int selectedMap)
             continue;
         }
 
-        for (int elevation = 0; elevation < ELEVATION_COUNT && elevationsListSize < maxEntriesPerPage; elevation++) {
+        for (MapElevation elevation = ELEVATION_FIRST; elevation < ELEVATION_COUNT && elevationsListSize < maxEntriesPerPage; elevation++) {
             if (automapHeader->offsets[map][elevation] > 0) {
                 if (currentIndex >= startIndex && currentIndex < endIndex) {
                     _sortlist[elevationsListSize].name = mapGetName(map, elevation);
@@ -1864,8 +1911,8 @@ static int _PrintAMList(int selectedLocation)
 
     int mapCount = std::min(wmMapMaxCount(), AUTOMAP_MAP_COUNT);
     for (Map map = MAP_FIRST; map < mapCount; map++) {
-        int elevation;
-        for (elevation = 0; elevation < ELEVATION_COUNT; elevation++) {
+        MapElevation elevation;
+        for (elevation = ELEVATION_FIRST; elevation < ELEVATION_COUNT; elevation++) {
             if (automapHeader->offsets[map][elevation] > 0) {
                 if (_automapDisplayMap(map) == 0) {
                     break;
@@ -1958,29 +2005,30 @@ static int _PrintAMList(int selectedLocation)
 }
 
 // 0x49932C
-static void pipboyHandleVideoArchive(int a1)
+static void pipboyHandleVideoArchive(int eventCode)
 {
-    if (a1 == 1024) {
+    if (eventCode == 1024) {
         pipboyWindowDestroyButtons();
         _view_page = pipboyRenderVideoArchive(-1);
         pipboyWindowCreateButtons(2, _view_page, false);
-    } else if (a1 >= 0 && a1 <= _view_page) {
+    } else if (eventCode >= 0 && eventCode <= _view_page) {
         soundPlayFile("ib1p1xx1");
 
-        pipboyRenderVideoArchive(a1);
+        pipboyRenderVideoArchive(eventCode);
 
-        int movie;
-        for (movie = 2; movie < 16; movie++) {
+        int remainingMovieSelection = eventCode;
+        GameMovie movie;
+        for (movie = MOVIE_ELDER; movie < MOVIE_CREDITS; movie++) {
             if (gameMovieIsSeen(movie)) {
-                a1--;
-                if (a1 <= 0) {
+                remainingMovieSelection--;
+                if (remainingMovieSelection <= 0) {
                     break;
                 }
             }
         }
 
-        if (movie < MOVIE_COUNT) {
-            gameMoviePlay(movie, GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC);
+        if (gameMovieIsValid(movie)) {
+            gameMoviePlay(movie, GameMovieFlags::FadeIn | GameMovieFlags::FadeOut | GameMovieFlags::PauseMusic);
         } else {
             debugPrint("\n ** Selected movie not found in list! **\n");
         }
@@ -1993,14 +2041,13 @@ static void pipboyHandleVideoArchive(int a1)
 }
 
 // 0x4993DC
-static int pipboyRenderVideoArchive(int a1)
+static int pipboyRenderVideoArchive(int selectedEntry)
 {
     const char* text;
-    int i;
-    int v12;
+    int selectedEntryIndex;
     int msg_num;
-    int v5;
-    int v8;
+    int visibleEntryCount;
+    int entryIndex;
     Color color;
 
     blitBufferToBuffer(_pipboyFrmImages[PIPBOY_FRM_BACKGROUND].getData() + PIPBOY_WINDOW_WIDTH * PIPBOY_WINDOW_CONTENT_VIEW_Y + PIPBOY_WINDOW_CONTENT_VIEW_X,
@@ -2022,18 +2069,18 @@ static int pipboyRenderVideoArchive(int a1)
         gPipboyCurrentLine = 2;
     }
 
-    v5 = 0;
-    v12 = a1 - 1;
+    visibleEntryCount = 0;
+    selectedEntryIndex = selectedEntry - 1;
 
     // 502 - Elder Speech
     // ...
     // 516 - Credits
     msg_num = 502;
 
-    for (i = 2; i < 16; i++) {
-        if (gameMovieIsSeen(i)) {
-            v8 = v5++;
-            if (v8 == v12) {
+    for (GameMovie movie = MOVIE_ELDER; movie < MOVIE_CREDITS; movie++) {
+        if (gameMovieIsSeen(movie)) {
+            entryIndex = visibleEntryCount++;
+            if (entryIndex == selectedEntryIndex) {
                 color = COLOR_LIGHT_YELLOW;
             } else {
                 color = COLOR_GREEN;
@@ -2050,7 +2097,7 @@ static int pipboyRenderVideoArchive(int a1)
 
     windowRefreshRect(gPipboyWindow, &gPipboyWindowContentRect);
 
-    return v5;
+    return visibleEntryCount;
 }
 
 // 0x499518
@@ -2262,6 +2309,11 @@ static bool pipboyRestSetGameTime(unsigned int newGameTime, RestEventType eventT
 // 0x499A24
 static bool pipboyRest(int hours, int minutes, int duration)
 {
+    struct RestDepthGuard {
+        RestDepthGuard() { pipboyRestDepth++; }
+        ~RestDepthGuard() { pipboyRestDepth--; }
+    } restDepthGuard;
+
     gameMouseSetCursor(MOUSE_CURSOR_WAIT_WATCH);
 
     bool rc = false;
@@ -2486,7 +2538,7 @@ static bool _Check4Health(int minutes)
 {
     _rest_time += minutes;
 
-    if (_rest_time < 180) {
+    if (_rest_time < restHealTime) {
         return false;
     }
 

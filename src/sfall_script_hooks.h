@@ -3,9 +3,11 @@
 
 #include "animation_defs.h"
 #include "art.h"
+#include "game.h"
 #include "interpreter.h"
 #include "interpreter_extra.h"
 #include "queue.h"
+#include "random.h"
 #include "scripts.h"
 #include "skill_defs.h"
 #include "worldmap.h"
@@ -143,7 +145,8 @@ typedef enum {
     HOOK_ENCOUNTER = 43,
 
     //    HOOK_ADJUSTPOISON = 44,
-    //    HOOK_ADJUSTRADS = 45,
+    // A critter's radiation level is changed.
+    HOOK_ADJUSTRADS = 45,
 
     // Any random roll. Has various uses for advanced scripts.
     HOOK_ROLLCHECK = 46,
@@ -302,6 +305,8 @@ enum AmmoCostHookType {
 };
 
 enum class RemoveInventoryObjectHookReason {
+    // sfall's value for its "Unlimited Ammo" fix (see `inventoryEquipFunc`).
+    WieldStack = -2,
     ItemRemovedInventory = 4831349,
     ItemRemoved = 4548572,
     ItemRemovedMulti = 4563866,
@@ -341,7 +346,7 @@ enum class EncounterHookResult {
 };
 
 bool scriptHooksRegister(Program* program, HookType hookType, int procedureIndex);
-bool scriptHooks_StdProcedure(int procedureNumber, Object* self, Object* source, Object* target, int fixedParam, bool after);
+bool scriptHooks_StdProcedure(ScriptProc procedureNumber, Object* self, Object* source, Object* target, int fixedParam, bool after);
 void scriptHooks_ItemDamage(Object* weapon, Object* critter, HitMode hitMode, bool isMeleeWeaponAttack, int* minDamagePtr, int* maxDamagePtr);
 int scriptHooks_AmmoCost(Object* weapon, int rounds, int ammoCost, AmmoCostHookType hookType);
 int scriptHooks_Steal(Object* thief, Object* target, Object* item, bool isPlanting, int quantity, int* xpOverride);
@@ -350,7 +355,7 @@ bool scriptHooksInit();
 void scriptHooksReset();
 void scriptHooksExit();
 
-void scriptHooks_GameModeChange(int exit, int previousGameMode);
+void scriptHooks_GameModeChange(int exit, GameMode::Flags previousGameMode);
 bool scriptHooks_RestTimer(unsigned int gameTime, RestEventType eventType, int hours, int minutes);
 void scriptHooks_OnDeath(Object* critter);
 int scriptHooks_ExplosiveTimer(Object* explosive, int delay, EventType eventType);
@@ -364,13 +369,14 @@ PerceptionResult scriptHooks_WithinPerception(Object* watcher, Object* target, P
 int scriptHooks_CalcApCost(Object* critter, HitMode hitMode, bool aiming, int actionPoints, Object* weapon);
 int scriptHooks_MoveCost(Object* critter, int distance, int actionPoints);
 int scriptHooks_ToHit(Object* attacker, Object* defender, int tile, HitMode hitMode, HitLocation hitLocation, int hitChance, int hitChanceUncapped, bool useDistance);
-int scriptHooks_AfterHitRoll(Object* attacker, Object** defenderPtr, HitLocation* hitLocationPtr, int hitChance, int roll);
+Roll scriptHooks_AfterHitRoll(Object* attacker, Object** defenderPtr, HitLocation* hitLocationPtr, int hitChance, Roll roll);
 void scriptHooks_DeathAnim(Object* attacker, Object* defender, Object* weapon, int damage, AnimationType* anim);
 UseSkillOnHookResult scriptHooks_UseSkillOn(Object** userPtr, Object* target, Skill skill);
 int scriptHooks_UseSkill(Object* user, Object* target, Skill skill, int skillBonus);
 int scriptHooks_UseItem(Object* user, Object* objUsed);
 int scriptHooks_UseItemOn(Object* user, Object* target, Object* objUsed);
 AnimationType scriptHooks_UseAnimObj(Object* user, Object* target, AnimationType anim);
+int scriptHooks_AdjustRads(Object* critter, int amount);
 void scriptHooks_RemoveInventoryObject(Object* owner, Object* item, int quantity, RemoveInventoryObjectHookReason reason, Object* target);
 void scriptHooks_ComputeDamage(Attack* attack, int numRounds, int baseDmgMult);
 void scriptHooks_BarterPrice(BarterPriceContext* ctx);

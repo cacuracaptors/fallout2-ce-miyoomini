@@ -557,7 +557,7 @@ namespace {
 
         handled = true;
 
-        switch (objectTypeFromPid(object->pid)) {
+        switch (ProtoId(object).objectType()) {
         case OBJ_TYPE_CRITTER:
             return getCritterObjectData(object, field);
         case OBJ_TYPE_ITEM:
@@ -600,7 +600,7 @@ namespace {
             return true;
         case ObjectDataField::Elevation:
             if (!intDataValue(data, intValue)) return false;
-            return objectSetLocation(object, object->tile, intValue, nullptr) == 0;
+            return objectSetLocation(object, object->tile, static_cast<MapElevation>(intValue), nullptr) == 0;
         case ObjectDataField::Inventory:
             return false;
         case ObjectDataField::Pid:
@@ -752,7 +752,7 @@ namespace {
             return changed;
         }
 
-        switch (objectTypeFromPid(object->pid)) {
+        switch (ProtoId(object).objectType()) {
         case OBJ_TYPE_CRITTER:
             return setCritterObjectData(object, field, data);
         case OBJ_TYPE_ITEM:
@@ -824,6 +824,7 @@ static void mf_set_object_data(OpcodeContext& ctx);
 static void mf_set_outline(OpcodeContext& ctx);
 static void mf_set_party_member_cc_msg_ids(OpcodeContext& ctx);
 static void mf_set_rest_mode(OpcodeContext& ctx);
+static void mf_set_rest_heal_time(OpcodeContext& ctx);
 static void mf_set_rest_option(OpcodeContext& ctx);
 static void mf_set_scr_name(OpcodeContext& ctx);
 static void mf_set_terrain_name(OpcodeContext& ctx);
@@ -933,7 +934,7 @@ const MetaruleInfo kMetarules[] = {
     { "set_outline", mf_set_outline, 2, 2, -1, { ARG_OBJECT, ARG_INT } },
     { "set_party_member_cc_msg_ids", mf_set_party_member_cc_msg_ids, 3, 3, -1, { ARG_INT, ARG_INT, ARG_INT } },
     // {"set_quest_failure_value",   mf_set_quest_failure_value,   2, 2, -1, {ARG_INT, ARG_INT}},
-    // {"set_rest_heal_time",        mf_set_rest_heal_time,        1, 1, -1, {ARG_INT}},
+    { "set_rest_heal_time", mf_set_rest_heal_time, 1, 1, -1, { ARG_INT } },
     // {"set_worldmap_heal_time",    mf_set_worldmap_heal_time,    1, 1, -1, {ARG_INT}},
     { "set_rest_mode", mf_set_rest_mode, 1, 1, -1, { ARG_INT } },
     { "set_rest_option", mf_set_rest_option, 2, 2, -1, { ARG_INT, ARG_INT } },
@@ -1050,11 +1051,6 @@ static bool clampWindowFillRect(int windowWidth, int windowHeight, int& x, int& 
     return truncated;
 }
 
-static bool applyWindowFlag(int windowId, int bitFlag, bool enabled)
-{
-    return scriptWindowSetFlag(windowId, bitFlag, enabled);
-}
-
 void mf_art_cache_flush(OpcodeContext& ctx)
 {
     artCacheFlush();
@@ -1140,11 +1136,11 @@ void mf_combat_data(OpcodeContext& ctx)
 
 void mf_create_win(OpcodeContext& ctx)
 {
-    int flags = ctx.numArgs() > 5
-        ? ctx.arg(5).asInt()
+    WindowFlags flags = ctx.numArgs() > 5
+        ? static_cast<WindowFlags>(ctx.arg(5).asInt())
         : WINDOW_MOVE_ON_TOP;
 
-    ColorWithFlags color = (flags & WINDOW_TRANSPARENT) != 0 ? (COLOR_FIRST | DRAW_TEXT_FLAG_NONE) : static_cast<ColorWithFlags>(256);
+    ColorWithFlags color = (flags & WINDOW_TRANSPARENT) != WINDOW_NONE ? (COLOR_FIRST | DRAW_TEXT_FLAG_NONE) : static_cast<ColorWithFlags>(256);
     if (scriptWindowCreate(ctx.stringArg(0),
             ctx.arg(1).asInt(),
             ctx.arg(2).asInt(),
@@ -1270,7 +1266,7 @@ void mf_get_object_ai_data(OpcodeContext& ctx)
     const int aiParam = ctx.arg(1).asInt();
 
     ProgramValue result(-1);
-    if (objectTypeFromPid(object->pid) != OBJ_TYPE_CRITTER) {
+    if (ProtoId(object).objectType() != OBJ_TYPE_CRITTER) {
         ctx.setReturn(result);
         return;
     }
@@ -1476,8 +1472,8 @@ static bool loadSfallArtImage(OpcodeContext& ctx, int artArg, int frame, Rotatio
         fid = ctx.arg(artArg).asInt();
         Rotation frameRotation = ROTATION_NE;
         FrmId lockFrmId = FrmId(fid);
-        if (objectTypeFromFid(fid) == OBJ_TYPE_CRITTER) {
-            frameRotation = rotationIsValid(rotation) ? rotation : rotationFromFid(fid);
+        if (lockFrmId.objectType() == OBJ_TYPE_CRITTER) {
+            frameRotation = rotationIsValid(rotation) ? rotation : lockFrmId.rotation();
             if (rotationIsValid(rotation)) {
                 lockFrmId = FrmId((rotation << 28) | (fid & 0x0FFFFFFF));
             }
@@ -1645,7 +1641,7 @@ static void mf_interface_art_draw(OpcodeContext& ctx)
 
     int xOffset = 0;
     int yOffset = 0;
-    if (ctx.arg(1).isInt() && objectTypeFromFid(fid) == OBJ_TYPE_CRITTER && rotation >= ROTATION_FIRST) {
+    if (ctx.arg(1).isInt() && FrmId(fid).objectType() == OBJ_TYPE_CRITTER && rotation >= ROTATION_FIRST) {
         xOffset = image.getXOffset();
         yOffset = image.getYOffset();
     }
@@ -1676,7 +1672,7 @@ void mf_inventory_redraw(OpcodeContext& ctx)
 void mf_item_weight(OpcodeContext& ctx)
 {
     Object* object = ctx.arg(0).asObject();
-    if (objectTypeFromPid(object->pid) != OBJ_TYPE_ITEM) {
+    if (ProtoId(object).objectType() != OBJ_TYPE_ITEM) {
         ctx.printError("%s() - expected item object.", ctx.name());
         ctx.setReturn(0);
         return;
@@ -1823,8 +1819,8 @@ static void mf_objects_in_radius(OpcodeContext& ctx)
 {
     int sourceTile = ctx.arg(0).asInt();
     int radius = std::clamp(ctx.arg(1).asInt(), 0, 50);
-    int elevation = std::clamp(ctx.arg(2).asInt(), 0, ELEVATION_COUNT - 1);
-    int type = ctx.numArgs() > 3 ? ctx.arg(3).asInt() : -1;
+    MapElevation elevation = std::clamp(static_cast<MapElevation>(ctx.arg(2).asInt()), ELEVATION_FIRST, ELEVATION_THIRD);
+    ObjectType type = ctx.numArgs() > 3 ? static_cast<ObjectType>(ctx.arg(3).asInt()) : OBJ_TYPE_INVALID;
 
     ArrayId arrayId = CreateTempArray(0, 0);
 
@@ -1837,7 +1833,8 @@ static void mf_objects_in_radius(OpcodeContext& ctx)
     int endTile;
     for (int tile = objectsInRadiusFirstTile(sourceTile, radius, &endTile); tile < endTile; tile++) {
         for (Object* object = objectFindFirstAtLocation(elevation, tile); object != nullptr; object = objectFindNextAtLocation()) {
-            if (type != -1 && (object->pid == -1 || objectTypeFromPid(object->pid) != type)) {
+            const ProtoId protoId = object;
+            if (type != OBJ_TYPE_INVALID && (!protoId.valid() || protoId.objectType() != type)) {
                 continue;
             }
 
@@ -1881,7 +1878,7 @@ void mf_set_combat_free_move(OpcodeContext& ctx)
 
 void mf_set_cursor_mode(OpcodeContext& ctx)
 {
-    int mode = ctx.arg(0).asInt();
+    GameMouseMode mode = static_cast<GameMouseMode>(ctx.arg(0).asInt());
     gameMouseSetMode(mode);
 }
 
@@ -1937,12 +1934,12 @@ void mf_set_party_member_cc_msg_ids(OpcodeContext& ctx)
         return;
     }
 
-    gameDialogSetPartyMemberCcMsgIds(pid, startMsgId, endMsgId);
+    gameDialogSetPartyMemberCcMsgIds(ProtoId(pid), startMsgId, endMsgId);
 }
 
 void mf_set_window_flag(OpcodeContext& ctx)
 {
-    int bitFlag = ctx.arg(1).asInt();
+    WindowFlags bitFlag = static_cast<WindowFlags>(ctx.arg(1).asInt());
     switch (bitFlag) {
     case WINDOW_DONT_MOVE_TOP:
     case WINDOW_MOVE_ON_TOP:
@@ -1972,7 +1969,7 @@ void mf_set_window_flag(OpcodeContext& ctx)
         return;
     }
 
-    applyWindowFlag(windowId, bitFlag, enabled);
+    scriptWindowSetFlag(windowId, bitFlag, enabled);
 }
 
 void mf_set_unique_id(OpcodeContext& ctx)
@@ -2070,7 +2067,7 @@ void mf_unwield_slot(OpcodeContext& ctx)
         return;
     }
 
-    if (objectTypeFromPid(critter->pid) != OBJ_TYPE_CRITTER) {
+    if (ProtoId(critter).objectType() != OBJ_TYPE_CRITTER) {
         ctx.printError("%s() - the object is not a critter.", ctx.name());
         ctx.setReturn(-1);
         return;
@@ -2148,6 +2145,11 @@ static void mf_encounter_detection(OpcodeContext& ctx)
 static void mf_set_rest_mode(OpcodeContext& ctx)
 {
     wmSetRestMode(static_cast<RestModeFlag>(ctx.arg(0).asInt()));
+}
+
+static void mf_set_rest_heal_time(OpcodeContext& ctx)
+{
+    pipboySetRestHealTime(ctx.arg(0).asInt());
 }
 
 static void mf_set_rest_option(OpcodeContext& ctx)

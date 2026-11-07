@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include <algorithm>
+#include <limits>
 #include <vector>
 
 #include "animation.h"
@@ -49,7 +50,7 @@ static void _obj_light_table_init();
 static void _obj_blend_table_init();
 static void _obj_blend_table_exit();
 static int _obj_save_obj(File* stream, Object* object);
-static int _obj_load_obj(File* stream, Object** objectPtr, int elevation, Object* owner);
+static int _obj_load_obj(File* stream, Object** objectPtr, MapElevation elevation, Object* owner);
 static int objectAllocate(Object** objectPtr);
 static void objectDeallocate(Object** objectPtr);
 static int objectListNodeCreate(ObjectListNode** nodePtr);
@@ -57,11 +58,11 @@ static void objectListNodeDestroy(ObjectListNode** nodePtr);
 static int objectGetListNode(Object* obj, ObjectListNode** out_node, ObjectListNode** out_prev_node);
 static void _obj_insert(ObjectListNode* ptr);
 static int _obj_remove(ObjectListNode* a1, ObjectListNode* a2);
-static int _obj_connect_to_tile(ObjectListNode* node, int tile_index, int elev, Rect* rect);
+static int _obj_connect_to_tile(ObjectListNode* node, int tile_index, MapElevation elev, Rect* rect);
 static int _obj_adjust_light(Object* obj, int a2, Rect* rect);
 static void objectDrawOutline(Object* object, Rect* rect);
 static void _obj_render_object(Object* object, Rect* rect, int light);
-static int _obj_preload_sort(const void* a1, const void* a2);
+static int _obj_preload_sort(const void* fid1, const void* fid2);
 static Object* objectPrepareWhoHitMeForSave(CritterCombatData* combatData);
 
 // 0x5195F8 objInitialized
@@ -106,7 +107,7 @@ static ObjectListNode* gObjectListHead = nullptr;
 static int _centerToUpperLeft = 0;
 
 // 0x519630 find_elev
-static int gObjectFindElevation = 0;
+static MapElevation gObjectFindElevation = ELEVATION_FIRST;
 
 // 0x519634 find_tile
 static int gObjectFindTile = 0;
@@ -174,7 +175,7 @@ static int _light_distance[36] = {
 };
 
 // 0x51976C fix_violence_level
-static int gViolenceLevel = -1;
+static ViolenceLevel gViolenceLevel = VIOLENCE_LEVEL_INVALID;
 
 // 0x519770 obj_last_roof_x
 static int _obj_last_roof_x = -1;
@@ -183,7 +184,7 @@ static int _obj_last_roof_x = -1;
 static int _obj_last_roof_y = -1;
 
 // 0x519778 obj_last_elev
-static int _obj_last_elev = -1;
+static MapElevation _obj_last_elev = ELEVATION_INVALID;
 
 // 0x51977C obj_last_is_empty
 static bool _obj_last_is_empty = true;
@@ -302,7 +303,7 @@ static char _obj_seen[5001];
 // 0x488780 obj_init
 int objectsInit(unsigned char* buf, int width, int height, int pitch)
 {
-    const FrmId dudeFrmId = FrmId(_art_vault_guy_num, ANIM_STAND, WEAPON_ANIMATION_NONE, ROTATION_NE);
+    const FrmId dudeFrmId = FrmId(_art_vault_guy_num, ANIM_STAND, WeaponAnimation::None, ROTATION_NE);
     const InterfaceFrmId eggFrmId = InterfaceFrameId::Egg;
 
     memset(_obj_seen, 0, 5001);
@@ -353,7 +354,7 @@ int objectsInit(unsigned char* buf, int width, int height, int pitch)
     gObjectsWindowBufferSize = height * width;
     gObjectsWindowPitch = pitch;
 
-    objectCreateWithFrmIdPid(&gDude, dudeFrmId, 0x1000000);
+    objectCreateWithFrmIdProtoId(&gDude, dudeFrmId, CritterProtoTypeId::Dude);
 
     gDude->flags |= OBJECT_NO_REMOVE;
     gDude->flags |= OBJECT_NO_SAVE;
@@ -366,7 +367,7 @@ int objectsInit(unsigned char* buf, int width, int height, int pitch)
         exit(1);
     }
 
-    objectCreateWithFrmIdPid(&gEgg, eggFrmId, -1);
+    objectCreateWithFrmIdProtoId(&gEgg, eggFrmId, ProtoId::Empty());
     gEgg->flags |= OBJECT_NO_REMOVE;
     gEgg->flags |= OBJECT_NO_SAVE;
     gEgg->flags |= OBJECT_HIDDEN;
@@ -439,7 +440,7 @@ int objectRead(Object* obj, File* stream)
     if (fileReadInt32Enum<Rotation>(stream, &(obj->rotation)) == -1) return -1;
     if (fileReadInt32(stream, &(obj->fid)) == -1) return -1;
     if (fileReadUInt32Enum<ObjectFlags>(stream, &(obj->flags)) == -1) return -1;
-    if (fileReadInt32(stream, &(obj->elevation)) == -1) return -1;
+    if (fileReadInt32Enum<MapElevation>(stream, &(obj->elevation)) == -1) return -1;
     if (fileReadInt32(stream, &(obj->pid)) == -1) return -1;
     if (fileReadInt32(stream, &(obj->cid)) == -1) return -1;
     if (fileReadInt32(stream, &(obj->lightDistance)) == -1) return -1;
@@ -455,25 +456,26 @@ int objectRead(Object* obj, File* stream)
         return -1;
     }
 
-    if (isExitGridPid(obj->pid)) {
+    if (isExitGridProtoId(obj)) {
         if (obj->data.misc.map <= 0) {
-            constexpr int kExit2Grid1FrameId = MiscFrmId(MiscFrameId::Exit2Grid1).frameId().id;
-            constexpr int kExit3Grid8FrameId = MiscFrmId(MiscFrameId::Exit3Grid8).frameId().id;
+            constexpr int kExit2Grid1FrameId = MiscFrmId(MiscFrameId::Exit2Grid1).frameId();
+            constexpr int kExit3Grid8FrameId = MiscFrmId(MiscFrameId::Exit3Grid8).frameId();
             constexpr int kExitGridCount = kExit3Grid8FrameId - kExit2Grid1FrameId + 1;
-            const FrmId frmId = FrmId(obj->fid);
-            if (frmId.valid() && frmId.frameId().id < kExit2Grid1FrameId) {
-                obj->fid = MiscFrmId(static_cast<MiscFrameId>(frmId.frameId().id + kExitGridCount), animationTypeFromFid(obj->fid)).fid();
+            const FrmId frmId = FrmId(obj);
+            if (frmId.valid() && frmId.frameId() < kExit2Grid1FrameId) {
+                obj->fid = MiscFrmId(static_cast<MiscFrameId>(frmId.frameId() + kExitGridCount), frmId.animationType()).fid();
             }
         }
     } else {
-        if (objectTypeFromPid(obj->pid) == OBJ_TYPE_ITEM && !(gMapHeader.flags & MAP_HEADER_SAVED)) {
-            _object_fix_weapon_ammo(obj);
-        }
+        if (ProtoId(obj).objectType() == OBJ_TYPE_ITEM) {
+            if (!(gMapHeader.flags & MAP_HEADER_SAVED)) {
+                _object_fix_weapon_ammo(obj);
+            }
 
-        if (objectTypeFromPid(obj->pid) == OBJ_TYPE_ITEM
-            && itemGetType(obj) == ITEM_TYPE_WEAPON
-            && obj->data.item.weapon.ammoQuantity < 0) {
-            obj->data.item.weapon.ammoQuantity = 0;
+            if (itemGetType(obj) == ITEM_TYPE_WEAPON
+                && obj->data.item.weapon.ammoQuantity < 0) {
+                obj->data.item.weapon.ammoQuantity = 0;
+            }
         }
     }
 
@@ -494,7 +496,7 @@ int objectLoadAll(File* stream)
 {
     int rc = objectLoadAllInternal(stream);
 
-    gViolenceLevel = -1;
+    gViolenceLevel = VIOLENCE_LEVEL_INVALID;
 
     return rc;
 }
@@ -515,22 +517,34 @@ static int objectLoadAllInternal(File* stream)
         return -1;
     }
 
+    if (objectCount < 0
+        || static_cast<size_t>(objectCount) > std::numeric_limits<size_t>::max() / sizeof(*gObjectFids)) {
+        debugPrint("\nError loading objects: invalid object count %d.\n", objectCount);
+        return -1;
+    }
+
     if (gObjectFids != nullptr) {
         internal_free(gObjectFids);
+        gObjectFids = nullptr;
     }
+    gObjectFidsLength = 0;
 
     if (objectCount != 0) {
         gObjectFids = (int*)internal_malloc(sizeof(*gObjectFids) * objectCount);
-        memset(gObjectFids, 0, sizeof(*gObjectFids) * objectCount);
         if (gObjectFids == nullptr) {
             return -1;
         }
-        gObjectFidsLength = 0;
+        memset(gObjectFids, 0, sizeof(*gObjectFids) * objectCount);
     }
 
-    for (int elevation = 0; elevation < ELEVATION_COUNT; elevation++) {
+    for (MapElevation elevation = ELEVATION_FIRST; elevation < ELEVATION_COUNT; elevation++) {
         int objectCountAtElevation;
         if (fileReadInt32(stream, &objectCountAtElevation) == -1) {
+            return -1;
+        }
+
+        if (objectCountAtElevation < 0 || objectCountAtElevation > objectCount - gObjectFidsLength) {
+            debugPrint("\nError loading objects: invalid elevation object count %d.\n", objectCountAtElevation);
             return -1;
         }
 
@@ -577,8 +591,24 @@ static int objectLoadAllInternal(File* stream)
 
             _obj_insert(objectListNode);
 
-            if ((objectListNode->obj->flags & OBJECT_NO_REMOVE) && objectTypeFromPid(objectListNode->obj->pid) == OBJ_TYPE_CRITTER && objectListNode->obj->pid != 18000) {
-                objectListNode->obj->flags &= ~OBJECT_NO_REMOVE;
+            if ((objectListNode->obj->flags & OBJECT_NO_REMOVE) != 0) {
+                if (ProtoId(objectListNode->obj).objectType() == OBJ_TYPE_CRITTER && objectListNode->obj->pid != 18000) {
+                    objectListNode->obj->flags &= ~OBJECT_NO_REMOVE;
+                }
+            } else if (ProtoId(objectListNode->obj).objectType() == OBJ_TYPE_CRITTER) {
+                // SFALL: Fix for "NPC turns into a container" bug: a critter
+                // out of combat loses the turn it would lose and the woken
+                // mark, and stands up if it's knocked down (a knocked out one
+                // has its wake up event).
+                CritterCombatData* combatData = &(objectListNode->obj->data.critter.combat);
+                if ((combatData->maneuver & CRITTER_MANEUVER_ENGAGING) == CRITTER_MANEUVER_NONE
+                    && (combatData->results & DAM_DEAD) == DAM_NONE) {
+                    combatData->results &= ~(DAM_KNOCKOUT_WOKEN | DAM_LOSE_TURN);
+                    if ((combatData->results & DAM_KNOCKED_OUT) == DAM_NONE
+                        && (combatData->results & DAM_KNOCKED_DOWN) != DAM_NONE) {
+                        knockoutEventProcess(objectListNode->obj, nullptr);
+                    }
+                }
             }
 
             Inventory* inventory = &(objectListNode->obj->data.inventory);
@@ -619,6 +649,11 @@ static int objectLoadAllInternal(File* stream)
         }
     }
 
+    if (gObjectFidsLength != objectCount) {
+        debugPrint("\nError loading objects: expected %d objects, read %d.\n", objectCount, gObjectFidsLength);
+        return -1;
+    }
+
     _obj_rebuild_all_light();
 
     return 0;
@@ -629,12 +664,13 @@ static int objectLoadAllInternal(File* stream)
 // 0x48911C object_fix_weapon_ammo
 static void _object_fix_weapon_ammo(Object* obj)
 {
-    if (objectTypeFromPid(obj->pid) != OBJ_TYPE_ITEM) {
+    const ProtoId protoId = obj;
+    if (protoId.objectType() != OBJ_TYPE_ITEM) {
         return;
     }
 
     Proto* proto;
-    if (protoGetProto(obj->pid, &proto) == -1) {
+    if (protoGetProto(protoId, &proto) == -1) {
         debugPrint("\nError: obj_load: proto_ptr failed on pid");
         exit(1);
     }
@@ -642,7 +678,7 @@ static void _object_fix_weapon_ammo(Object* obj)
     int charges;
     if (itemGetType(obj) == ITEM_TYPE_WEAPON) {
         int ammoTypePid = obj->data.item.weapon.ammoTypePid;
-        if (ammoTypePid == 0xCCCCCCCC || ammoTypePid == -1) {
+        if (ammoTypePid == 0xCCCCCCCC || ammoTypePid == ProtoId::kEmptyPid) {
             obj->data.item.weapon.ammoTypePid = proto->item.data.weapon.ammoTypePid;
         }
 
@@ -651,14 +687,14 @@ static void _object_fix_weapon_ammo(Object* obj)
             obj->data.item.weapon.ammoQuantity = proto->item.data.weapon.ammoCapacity;
         }
     } else {
-        if (objectTypeFromPid(obj->pid) == OBJ_TYPE_MISC) {
+        if (ProtoId(obj).objectType() == OBJ_TYPE_MISC) {
             // FIXME: looks like this code in unreachable
             charges = obj->data.item.misc.charges;
             if (charges == 0xCCCCCCCC) {
                 charges = proto->item.data.misc.charges;
                 obj->data.item.misc.charges = charges;
                 if (charges == 0xCCCCCCCC) {
-                    debugPrint("\nError: Misc Item Prototype %s: charges incorrect!", protoGetName(obj->pid));
+                    debugPrint("\nError: Misc Item Prototype %s: charges incorrect!", protoGetName(obj));
                     obj->data.item.misc.charges = 0;
                 }
             } else {
@@ -683,7 +719,7 @@ static int objectWrite(Object* obj, File* stream)
     if (fileWriteInt32Enum<Rotation>(stream, obj->rotation) == -1) return -1;
     if (fileWriteInt32(stream, obj->fid) == -1) return -1;
     if (fileWriteUInt32Enum<ObjectFlags>(stream, obj->flags) == -1) return -1;
-    if (fileWriteInt32(stream, obj->elevation) == -1) return -1;
+    if (fileWriteInt32Enum<MapElevation>(stream, obj->elevation) == -1) return -1;
     if (fileWriteInt32(stream, obj->pid) == -1) return -1;
     if (fileWriteInt32(stream, obj->cid) == -1) return -1;
     if (fileWriteInt32(stream, obj->lightDistance) == -1) return -1;
@@ -712,7 +748,7 @@ int objectSaveAll(File* stream)
         return -1;
     }
 
-    for (int elevation = 0; elevation < ELEVATION_COUNT; elevation++) {
+    for (MapElevation elevation = ELEVATION_FIRST; elevation < ELEVATION_COUNT; elevation++) {
         int objectCountAtElevation = 0;
 
         long objectCountAtElevationPos = fileTell(stream);
@@ -733,7 +769,7 @@ int objectSaveAll(File* stream)
 
                 CritterCombatData* combatData = nullptr;
                 Object* whoHitMe = nullptr;
-                if (objectTypeFromPid(object->pid) == OBJ_TYPE_CRITTER) {
+                if (ProtoId(object).objectType() == OBJ_TYPE_CRITTER) {
                     combatData = &(object->data.critter.combat);
                     whoHitMe = objectPrepareWhoHitMeForSave(combatData);
                 }
@@ -742,7 +778,7 @@ int objectSaveAll(File* stream)
                     return -1;
                 }
 
-                if (objectTypeFromPid(object->pid) == OBJ_TYPE_CRITTER) {
+                if (ProtoId(object).objectType() == OBJ_TYPE_CRITTER) {
                     combatData->whoHitMe = whoHitMe;
                 }
 
@@ -780,7 +816,7 @@ int objectSaveAll(File* stream)
 }
 
 // 0x489550 obj_render_pre_roof
-void _obj_render_pre_roof(Rect* rect, int elevation)
+void _obj_render_pre_roof(Rect* rect, MapElevation elevation)
 {
     if (!gObjectsInitialized) {
         return;
@@ -881,7 +917,7 @@ void _obj_render_pre_roof(Rect* rect, int elevation)
 }
 
 // 0x4897EC obj_render_post_roof
-void _obj_render_post_roof(Rect* rect, int elevation)
+void _obj_render_post_roof(Rect* rect, MapElevation elevation)
 {
     if (!gObjectsInitialized) {
         return;
@@ -896,6 +932,8 @@ void _obj_render_post_roof(Rect* rect, int elevation)
         objectDrawOutline(object, &updatedRect);
     }
 
+    gameMouseRenderLandingMarkerLabel(gObjectsWindowBuffer, gObjectsWindowPitch, &updatedRect);
+
     textObjectsRenderInRect(&updatedRect);
 
     ObjectListNode* objectListNode = gObjectListHead;
@@ -909,7 +947,7 @@ void _obj_render_post_roof(Rect* rect, int elevation)
 }
 
 // 0x489A84 obj_new
-int objectCreateWithFrmIdPid(Object** objectPtr, const FrmId& frmId, int pid)
+int objectCreateWithFrmIdProtoId(Object** objectPtr, const FrmId& frmId, const ProtoId& protoId)
 {
     ObjectListNode* objectListNode;
 
@@ -925,7 +963,7 @@ int objectCreateWithFrmIdPid(Object** objectPtr, const FrmId& frmId, int pid)
     }
 
     if (frmId.valid()) {
-        assert(frmId.hasFid() && "objectCreateWithFrmIdPid(Object** objectPtr, const FrmId& frmId, int pid) called with path based FrmId which is not supported!");
+        assert(frmId.hasFid() && "objectCreateWithFrmIdProtoId(Object** objectPtr, const FrmId& frmId, const ProtoId& protoId) called with path based FrmId which is not supported!");
     }
 
     objectListNode->obj->fid = frmId.fid();
@@ -935,10 +973,10 @@ int objectCreateWithFrmIdPid(Object** objectPtr, const FrmId& frmId, int pid)
         *objectPtr = objectListNode->obj;
     }
 
-    objectListNode->obj->pid = pid;
+    objectListNode->obj->pid = protoId.pid();
     objectListNode->obj->id = scriptsNewObjectId();
 
-    if (pid == -1 || objectTypeFromPid(pid) == OBJ_TYPE_TILE) {
+    if (!protoId.valid() || protoId.objectType() == OBJ_TYPE_TILE) {
         Inventory* inventory = &(objectListNode->obj->data.inventory);
         inventory->length = 0;
         inventory->items = nullptr;
@@ -948,7 +986,7 @@ int objectCreateWithFrmIdPid(Object** objectPtr, const FrmId& frmId, int pid)
     _proto_update_init(objectListNode->obj);
 
     Proto* proto = nullptr;
-    if (protoGetProto(pid, &proto) == -1) {
+    if (protoGetProto(protoId, &proto) == -1) {
         return 0;
     }
 
@@ -1004,17 +1042,17 @@ int objectCreateWithFrmIdPid(Object** objectPtr, const FrmId& frmId, int pid)
 }
 
 // 0x489C9C obj_pid_new
-int objectCreateWithPid(Object** objectPtr, int pid)
+int objectCreateWithProtoId(Object** objectPtr, const ProtoId& protoId)
 {
     Proto* proto;
 
     *objectPtr = nullptr;
 
-    if (protoGetProto(pid, &proto) == -1) {
+    if (protoGetProto(protoId, &proto) == -1) {
         return -1;
     }
 
-    return objectCreateWithFrmIdPid(objectPtr, FrmId(proto->fid), pid);
+    return objectCreateWithFrmIdProtoId(objectPtr, proto, protoId);
 }
 
 // 0x489CCC obj_copy
@@ -1091,7 +1129,7 @@ int _obj_copy(Object** a1, Object* a2)
 }
 
 // 0x489EC4 obj_connect
-int _obj_connect(Object* object, int tile, int elevation, Rect* rect)
+int _obj_connect(Object* object, int tile, MapElevation elevation, Rect* rect)
 {
     if (object == nullptr) {
         return -1;
@@ -1275,7 +1313,7 @@ int _obj_offset(Object* obj, int x, int y, Rect* rect)
 }
 
 // 0x48A324 obj_move
-int _obj_move(Object* a1, int a2, int a3, int elevation, Rect* a5)
+int _obj_move(Object* a1, int a2, int a3, MapElevation elevation, Rect* a5)
 {
     if (a1 == nullptr) {
         return -1;
@@ -1345,7 +1383,7 @@ int _obj_move(Object* a1, int a2, int a3, int elevation, Rect* a5)
     CacheEntry* cacheHandle;
     int width;
     int height;
-    Art* art = artLock(FrmId(a1->fid), &cacheHandle);
+    Art* art = artLock(FrmId(a1), &cacheHandle);
     if (art != nullptr) {
         artGetSize(art, a1->frame, a1->rotation, &width, &height);
         a1->sx = a2 - width / 2;
@@ -1377,7 +1415,7 @@ int _obj_move(Object* a1, int a2, int a3, int elevation, Rect* a5)
 }
 
 // 0x48A568 obj_move_to_tile
-int objectSetLocation(Object* obj, int tile, int elevation, Rect* rect)
+int objectSetLocation(Object* obj, int tile, MapElevation elevation, Rect* rect)
 {
     if (obj == nullptr) {
         return -1;
@@ -1424,7 +1462,7 @@ int objectSetLocation(Object* obj, int tile, int elevation, Rect* rect)
     }
 
     if (isInCombat()) {
-        if (objectTypeFromFid(obj->fid) == OBJ_TYPE_CRITTER) {
+        if (FrmId(obj).objectType() == OBJ_TYPE_CRITTER) {
             bool enableOutline = obj->outline != OUTLINE_TYPE_NONE && (obj->outline & OUTLINE_DISABLED) == OUTLINE_TYPE_NONE;
             _combat_update_critter_outline_for_los(obj, enableOutline);
         }
@@ -1444,8 +1482,8 @@ int objectSetLocation(Object* obj, int tile, int elevation, Rect* rect)
             }
 
             if (elevation == elev) {
-                if (objectTypeFromFid(obj->fid) == OBJ_TYPE_MISC) {
-                    if (isExitGridPid(obj->pid)) {
+                if (FrmId(obj).objectType() == OBJ_TYPE_MISC) {
+                    if (isExitGridProtoId(obj)) {
                         if ((obj->flags & OBJECT_HIDDEN) != OBJECT_NONE) {
                             objectListNode = objectListNode->next;
                             continue;
@@ -1476,15 +1514,16 @@ int objectSetLocation(Object* obj, int tile, int elevation, Rect* rect)
         int roofX = tile % 200 / 2;
         int roofY = tile / 200 / 2;
         if (roofX != _obj_last_roof_x || roofY != _obj_last_roof_y || elevation != _obj_last_elev) {
-            int currentSquare = _square[elevation]->fid[roofX + 100 * roofY];
-            const TileFrmId currentSquareFrmId = static_cast<TileFrameId>(frameIdFromFid(currentSquare >> 16));
+            int currentSquare = _square[elevation]->tileFid[roofX + 100 * roofY];
+            const RoofTileFrmId currentSquareRoofFrmId = RoofTileFrmId(currentSquare);
+            const TileFrameId currentSquareRoofFrameId = currentSquareRoofFrmId.frameId<TileFrameId>();
             // CE: Add additional checks for -1 to prevent array lookup at index -101.
             int previousSquare = _obj_last_roof_x != -1 && _obj_last_roof_y != -1
-                ? _square[elevation]->fid[_obj_last_roof_x + 100 * _obj_last_roof_y]
+                ? _square[elevation]->tileFid[_obj_last_roof_x + 100 * _obj_last_roof_y]
                 : 0;
-            bool isEmpty = currentSquareFrmId == TileFrameId::Grid;
-
-            if (isEmpty != _obj_last_is_empty || (((currentSquare >> 16) & 0xF000) >> 12) != (((previousSquare >> 16) & 0xF000) >> 12)) {
+            const RoofTileFrmId previousSquareRoofFrmId = RoofTileFrmId(previousSquare);
+            bool isEmpty = currentSquareRoofFrameId == TileFrameId::Grid;
+            if (isEmpty != _obj_last_is_empty || currentSquareRoofFrmId.flags() != previousSquareRoofFrmId.flags()) {
                 if (!_obj_last_is_empty) {
                     tile_fill_roof(_obj_last_roof_x, _obj_last_roof_y, elevation, true);
                 }
@@ -1523,7 +1562,7 @@ int objectSetLocation(Object* obj, int tile, int elevation, Rect* rect)
             }
         }
     } else {
-        if (elevation != _obj_last_elev && objectTypeFromPid(obj->pid) == OBJ_TYPE_CRITTER) {
+        if (elevation != _obj_last_elev && ProtoId(obj).objectType() == OBJ_TYPE_CRITTER) {
             _combat_delete_critter(obj);
         }
     }
@@ -1534,8 +1573,8 @@ int objectSetLocation(Object* obj, int tile, int elevation, Rect* rect)
 // 0x48A9A0 obj_reset_roof
 int _obj_reset_roof()
 {
-    const TileFrmId frmId = static_cast<TileFrameId>(frameIdFromFid(_square[gDude->elevation]->fid[_obj_last_roof_x + 100 * _obj_last_roof_y] >> 16));
-    if (frmId != TileFrameId::Grid) {
+    TileFrameId frameId = RoofTileFrmId(_square[gDude->elevation]->tileFid[_obj_last_roof_x + 100 * _obj_last_roof_y]).frameId<TileFrameId>();
+    if (frameId != TileFrameId::Grid) {
         tile_fill_roof(_obj_last_roof_x, _obj_last_roof_y, gDude->elevation, 1);
     }
     return 0;
@@ -1584,7 +1623,7 @@ int objectSetFrame(Object* obj, int frame, Rect* rect)
         return -1;
     }
 
-    art = artLock(FrmId(obj->fid), &cache_entry);
+    art = artLock(FrmId(obj), &cache_entry);
     if (art == nullptr) {
         return -1;
     }
@@ -1621,7 +1660,7 @@ int objectSetNextFrame(Object* obj, Rect* dirtyRect)
         return -1;
     }
 
-    art = artLock(FrmId(obj->fid), &cache_entry);
+    art = artLock(FrmId(obj), &cache_entry);
     if (art == nullptr) {
         return -1;
     }
@@ -1665,7 +1704,7 @@ int objectSetPrevFrame(Object* obj, Rect* dirtyRect)
         return -1;
     }
 
-    art = artLock(FrmId(obj->fid), &cache_entry);
+    art = artLock(FrmId(obj), &cache_entry);
     if (art == nullptr) {
         return -1;
     }
@@ -2072,10 +2111,10 @@ int _obj_inven_free(Inventory* inventory)
 // 0x48B24C obj_action_can_use
 bool _obj_action_can_use(Object* obj)
 {
-    int pid = obj->pid;
+    const ProtoId protoId = ProtoId(obj);
     // SFALL
-    if (pid != PROTO_ID_LIT_FLARE && !explosiveIsActiveExplosive(pid)) {
-        return _proto_action_can_use(pid);
+    if (protoId != ItemProtoTypeId::LitFlare && !explosiveIsActiveExplosive(protoId)) {
+        return _proto_action_can_use(protoId);
     } else {
         return false;
     }
@@ -2084,18 +2123,20 @@ bool _obj_action_can_use(Object* obj)
 // 0x48B278 obj_action_can_talk_to
 bool _obj_action_can_talk_to(Object* obj)
 {
-    return _proto_action_can_talk_to(obj->pid) && (objectTypeFromPid(obj->pid) == OBJ_TYPE_CRITTER) && critterIsActive(obj);
+    const ProtoId protoId = obj;
+    return _proto_action_can_talk_to(protoId) && (protoId.objectType() == OBJ_TYPE_CRITTER) && critterIsActive(obj);
 }
 
 // 0x48B2A8 obj_portal_is_walk_thru
 bool _obj_portal_is_walk_thru(Object* obj)
 {
-    if (objectTypeFromPid(obj->pid) != OBJ_TYPE_SCENERY) {
+    const ProtoId protoId = obj;
+    if (protoId.objectType() != OBJ_TYPE_SCENERY) {
         return false;
     }
 
     Proto* proto;
-    if (protoGetProto(obj->pid, &proto) == -1) {
+    if (protoGetProto(protoId, &proto) == -1) {
         return false;
     }
 
@@ -2179,7 +2220,7 @@ void _obj_remove_all()
     }
 
     _obj_last_roof_y = -1;
-    _obj_last_elev = -1;
+    _obj_last_elev = ELEVATION_INVALID;
     _obj_last_is_empty = true;
     _obj_last_roof_x = -1;
 }
@@ -2187,13 +2228,13 @@ void _obj_remove_all()
 // 0x48B3A8 obj_find_first
 Object* objectFindFirst()
 {
-    gObjectFindElevation = 0;
+    gObjectFindElevation = ELEVATION_FIRST;
 
     for (gObjectFindTile = 0; gObjectFindTile < HEX_GRID_SIZE; gObjectFindTile++) {
         ObjectListNode* objectListNode = gObjectListHeadByTile[gObjectFindTile];
         while (objectListNode != nullptr) {
             Object* object = objectListNode->obj;
-            if (!artIsObjectTypeHidden(objectTypeFromFid(object->fid))) {
+            if (!artIsObjectTypeHidden(FrmId(object).objectType())) {
                 gObjectFindLastObjectListNode = objectListNode;
                 return object;
             }
@@ -2226,7 +2267,7 @@ Object* objectFindNext()
 
         while (objectListNode != nullptr) {
             Object* object = objectListNode->obj;
-            if (!artIsObjectTypeHidden(objectTypeFromFid(object->fid))) {
+            if (!artIsObjectTypeHidden(FrmId(object).objectType())) {
                 gObjectFindLastObjectListNode = objectListNode;
                 return object;
             }
@@ -2239,7 +2280,7 @@ Object* objectFindNext()
 }
 
 // 0x48B48C obj_find_first_at
-Object* objectFindFirstAtElevation(int elevation)
+Object* objectFindFirstAtElevation(MapElevation elevation)
 {
     gObjectFindElevation = elevation;
     gObjectFindTile = 0;
@@ -2249,7 +2290,7 @@ Object* objectFindFirstAtElevation(int elevation)
         while (objectListNode != nullptr) {
             Object* object = objectListNode->obj;
             if (object->elevation == elevation) {
-                if (!artIsObjectTypeHidden(objectTypeFromFid(object->fid))) {
+                if (!artIsObjectTypeHidden(FrmId(object).objectType())) {
                     gObjectFindLastObjectListNode = objectListNode;
                     return object;
                 }
@@ -2284,7 +2325,7 @@ Object* objectFindNextAtElevation()
         while (objectListNode != nullptr) {
             Object* object = objectListNode->obj;
             if (object->elevation == gObjectFindElevation) {
-                if (!artIsObjectTypeHidden(objectTypeFromFid(object->fid))) {
+                if (!artIsObjectTypeHidden(FrmId(object).objectType())) {
                     gObjectFindLastObjectListNode = objectListNode;
                     return object;
                 }
@@ -2298,7 +2339,7 @@ Object* objectFindNextAtElevation()
 }
 
 // 0x48B5A8 obj_find_first_at_tile
-Object* objectFindFirstAtLocation(int elevation, int tile)
+Object* objectFindFirstAtLocation(MapElevation elevation, int tile)
 {
     gObjectFindElevation = elevation;
     gObjectFindTile = tile;
@@ -2307,7 +2348,7 @@ Object* objectFindFirstAtLocation(int elevation, int tile)
     while (objectListNode != nullptr) {
         Object* object = objectListNode->obj;
         if (object->elevation == elevation) {
-            if (!artIsObjectTypeHidden(objectTypeFromFid(object->fid))) {
+            if (!artIsObjectTypeHidden(FrmId(object).objectType())) {
                 gObjectFindLastObjectListNode = objectListNode;
                 return object;
             }
@@ -2331,7 +2372,7 @@ Object* objectFindNextAtLocation()
     while (objectListNode != nullptr) {
         Object* object = objectListNode->obj;
         if (object->elevation == gObjectFindElevation) {
-            if (!artIsObjectTypeHidden(objectTypeFromFid(object->fid))) {
+            if (!artIsObjectTypeHidden(FrmId(object).objectType())) {
                 gObjectFindLastObjectListNode = objectListNode;
                 return object;
             }
@@ -2357,7 +2398,7 @@ void objectGetRect(Object* obj, Rect* rect)
     bool isOutlined = objectHasOutline(obj);
 
     CacheEntry* artHandle;
-    Art* art = artLock(FrmId(obj->fid), &artHandle);
+    Art* art = artLock(FrmId(obj), &artHandle);
     if (art == nullptr) {
         rect->left = 0;
         rect->top = 0;
@@ -2412,13 +2453,14 @@ void objectGetRect(Object* obj, Rect* rect)
 }
 
 // 0x48B7F8 obj_occupied
-bool _obj_occupied(int tile, int elevation)
+bool _obj_occupied(int tile, MapElevation elevation)
 {
     ObjectListNode* objectListNode = gObjectListHeadByTile[tile];
     while (objectListNode != nullptr) {
         if (objectListNode->obj->elevation == elevation
             && objectListNode->obj != gGameMouseBouncingCursor
-            && objectListNode->obj != gGameMouseHexCursor) {
+            && objectListNode->obj != gGameMouseHexCursor
+            && objectListNode->obj != gGameMouseLandingMarker) {
             return true;
         }
         objectListNode = objectListNode->next;
@@ -2428,7 +2470,7 @@ bool _obj_occupied(int tile, int elevation)
 }
 
 // 0x48B848 obj_blocking_at
-Object* _obj_blocking_at(Object* excludeObj, int tile, int elev)
+Object* _obj_blocking_at(Object* excludeObj, int tile, MapElevation elev)
 {
     ObjectListNode* objectListNode;
     Object* obj;
@@ -2442,7 +2484,7 @@ Object* _obj_blocking_at(Object* excludeObj, int tile, int elev)
         obj = objectListNode->obj;
         if (obj->elevation == elev) {
             if ((obj->flags & OBJECT_HIDDEN) == OBJECT_NONE && (obj->flags & OBJECT_NO_BLOCK) == OBJECT_NONE && obj != excludeObj) {
-                ObjectType type = objectTypeFromFid(obj->fid);
+                ObjectType type = FrmId(obj).objectType();
                 if (type == OBJ_TYPE_CRITTER
                     || type == OBJ_TYPE_SCENERY
                     || type == OBJ_TYPE_WALL) {
@@ -2462,7 +2504,7 @@ Object* _obj_blocking_at(Object* excludeObj, int tile, int elev)
                 if ((obj->flags & OBJECT_MULTIHEX) != OBJECT_NONE) {
                     if (obj->elevation == elev) {
                         if ((obj->flags & OBJECT_HIDDEN) == OBJECT_NONE && (obj->flags & OBJECT_NO_BLOCK) == OBJECT_NONE && obj != excludeObj) {
-                            ObjectType type = objectTypeFromFid(obj->fid);
+                            ObjectType type = FrmId(obj).objectType();
                             if (type == OBJ_TYPE_CRITTER
                                 || type == OBJ_TYPE_SCENERY
                                 || type == OBJ_TYPE_WALL) {
@@ -2480,7 +2522,7 @@ Object* _obj_blocking_at(Object* excludeObj, int tile, int elev)
 }
 
 // 0x48B930 obj_shoot_blocking_at
-Object* _obj_shoot_blocking_at(Object* excludeObj, int tile, int elev)
+Object* _obj_shoot_blocking_at(Object* excludeObj, int tile, MapElevation elev)
 {
     if (!hexGridTileIsValid(tile)) {
         return nullptr;
@@ -2492,7 +2534,7 @@ Object* _obj_shoot_blocking_at(Object* excludeObj, int tile, int elev)
         if (candidate->elevation == elev) {
             unsigned int flags = candidate->flags;
             if ((flags & OBJECT_HIDDEN) == OBJECT_NONE && ((flags & OBJECT_NO_BLOCK) == OBJECT_NONE || (flags & OBJECT_SHOOT_THRU) == OBJECT_NONE) && candidate != excludeObj) {
-                ObjectType type = objectTypeFromFid(candidate->fid);
+                ObjectType type = FrmId(candidate).objectType();
                 // SFALL: Fix to prevent corpses from blocking line of fire.
                 if ((type == OBJ_TYPE_CRITTER && !critterIsDead(candidate))
                     || type == OBJ_TYPE_SCENERY
@@ -2517,7 +2559,7 @@ Object* _obj_shoot_blocking_at(Object* excludeObj, int tile, int elev)
             if ((flags & OBJECT_MULTIHEX) != OBJECT_NONE) {
                 if (candidate->elevation == elev) {
                     if ((flags & OBJECT_HIDDEN) == OBJECT_NONE && (flags & OBJECT_NO_BLOCK) == OBJECT_NONE && candidate != excludeObj) {
-                        ObjectType type = objectTypeFromFid(candidate->fid);
+                        ObjectType type = FrmId(candidate).objectType();
                         // SFALL: Fix to prevent corpses from blocking line of
                         // fire.
                         if ((type == OBJ_TYPE_CRITTER && !critterIsDead(candidate))
@@ -2536,7 +2578,7 @@ Object* _obj_shoot_blocking_at(Object* excludeObj, int tile, int elev)
 }
 
 // 0x48BA20 obj_ai_blocking_at
-Object* _obj_ai_blocking_at(Object* excludeObj, int tile, int elevation)
+Object* _obj_ai_blocking_at(Object* excludeObj, int tile, MapElevation elevation)
 {
     if (!hexGridTileIsValid(tile)) {
         return nullptr;
@@ -2549,7 +2591,7 @@ Object* _obj_ai_blocking_at(Object* excludeObj, int tile, int elevation)
             if ((object->flags & OBJECT_HIDDEN) == OBJECT_NONE
                 && (object->flags & OBJECT_NO_BLOCK) == OBJECT_NONE
                 && object != excludeObj) {
-                ObjectType objectType = objectTypeFromFid(object->fid);
+                ObjectType objectType = FrmId(object).objectType();
                 if (objectType == OBJ_TYPE_CRITTER
                     || objectType == OBJ_TYPE_SCENERY
                     || objectType == OBJ_TYPE_WALL) {
@@ -2578,7 +2620,7 @@ Object* _obj_ai_blocking_at(Object* excludeObj, int tile, int elevation)
                     if ((object->flags & OBJECT_HIDDEN) == OBJECT_NONE
                         && (object->flags & OBJECT_NO_BLOCK) == OBJECT_NONE
                         && object != excludeObj) {
-                        ObjectType objectType = objectTypeFromFid(object->fid);
+                        ObjectType objectType = FrmId(object).objectType();
                         if (objectType == OBJ_TYPE_CRITTER
                             || objectType == OBJ_TYPE_SCENERY
                             || objectType == OBJ_TYPE_WALL) {
@@ -2599,7 +2641,7 @@ Object* _obj_ai_blocking_at(Object* excludeObj, int tile, int elevation)
 }
 
 // 0x48BB44 obj_scroll_blocking_at
-int _obj_scroll_blocking_at(int tile, int elev)
+int _obj_scroll_blocking_at(int tile, MapElevation elev)
 {
     // TODO: Might be an error - why tile 0 is excluded?
     if (tile <= 0 || tile >= 40000) {
@@ -2612,7 +2654,7 @@ int _obj_scroll_blocking_at(int tile, int elev)
             break;
         }
 
-        if (objectListNode->obj->elevation == elev && objectListNode->obj->pid == 0x500000C) {
+        if (objectListNode->obj->elevation == elev && ProtoId(objectListNode->obj) == MiscProtoTypeId::Id0x0C) {
             return 0;
         }
 
@@ -2623,7 +2665,7 @@ int _obj_scroll_blocking_at(int tile, int elev)
 }
 
 // 0x48BB88 obj_sight_blocking_at
-Object* _obj_sight_blocking_at(Object* excludeObj, int tile, int elevation)
+Object* _obj_sight_blocking_at(Object* excludeObj, int tile, MapElevation elevation)
 {
     ObjectListNode* objectListNode = gObjectListHeadByTile[tile];
     while (objectListNode != nullptr) {
@@ -2632,7 +2674,7 @@ Object* _obj_sight_blocking_at(Object* excludeObj, int tile, int elevation)
             && (object->flags & OBJECT_HIDDEN) == OBJECT_NONE
             && (object->flags & OBJECT_LIGHT_THRU) == OBJECT_NONE
             && object != excludeObj) {
-            ObjectType objectType = objectTypeFromFid(object->fid);
+            ObjectType objectType = FrmId(object).objectType();
             if (objectType == OBJ_TYPE_SCENERY || objectType == OBJ_TYPE_WALL) {
                 return object;
             }
@@ -2709,7 +2751,7 @@ bool objectWithinWalkDistance(Object* critter, Object* target)
 }
 
 // 0x48BC38 obj_create_list
-int objectListCreate(int tile, int elevation, ObjectType objectType, Object*** objectListPtr)
+int objectListCreate(int tile, MapElevation elevation, ObjectType objectType, Object*** objectListPtr)
 {
     if (objectListPtr == nullptr) {
         return -1;
@@ -2723,7 +2765,7 @@ int objectListCreate(int tile, int elevation, ObjectType objectType, Object*** o
                 Object* obj = objectListNode->obj;
                 if ((obj->flags & OBJECT_HIDDEN) == OBJECT_NONE
                     && obj->elevation == elevation
-                    && objectTypeFromFid(obj->fid) == objectType) {
+                    && FrmId(obj).objectType() == objectType) {
                     count++;
                 }
                 objectListNode = objectListNode->next;
@@ -2735,7 +2777,7 @@ int objectListCreate(int tile, int elevation, ObjectType objectType, Object*** o
             Object* obj = objectListNode->obj;
             if ((obj->flags & OBJECT_HIDDEN) == OBJECT_NONE
                 && obj->elevation == elevation
-                && objectTypeFromFid(objectListNode->obj->fid) == objectType) {
+                && FrmId(objectListNode->obj).objectType() == objectType) {
                 count++;
             }
             objectListNode = objectListNode->next;
@@ -2758,7 +2800,7 @@ int objectListCreate(int tile, int elevation, ObjectType objectType, Object*** o
                 Object* obj = objectListNode->obj;
                 if ((obj->flags & OBJECT_HIDDEN) == OBJECT_NONE
                     && obj->elevation == elevation
-                    && objectTypeFromFid(obj->fid) == objectType) {
+                    && FrmId(obj).objectType() == objectType) {
                     *objects++ = obj;
                 }
                 objectListNode = objectListNode->next;
@@ -2770,7 +2812,7 @@ int objectListCreate(int tile, int elevation, ObjectType objectType, Object*** o
             Object* obj = objectListNode->obj;
             if ((obj->flags & OBJECT_HIDDEN) == OBJECT_NONE
                 && obj->elevation == elevation
-                && objectTypeFromFid(obj->fid) == objectType) {
+                && FrmId(obj).objectType() == objectType) {
                 *objects++ = obj;
             }
             objectListNode = objectListNode->next;
@@ -2953,7 +2995,7 @@ ObjectFlags _obj_intersects_with(Object* object, int x, int y)
 
     if (object == gEgg || (object->flags & OBJECT_HIDDEN) == OBJECT_NONE) {
         CacheEntry* handle;
-        Art* art = artLock(FrmId(object->fid), &handle);
+        Art* art = artLock(FrmId(object), &handle);
         if (art != nullptr) {
             int width;
             int height;
@@ -3000,10 +3042,10 @@ ObjectFlags _obj_intersects_with(Object* object, int x, int y)
                                 flags |= OBJECT_0X02;
                             }
                         } else {
-                            ObjectType type = objectTypeFromFid(object->fid);
+                            ObjectType type = FrmId(object).objectType();
                             if (type == OBJ_TYPE_SCENERY || type == OBJ_TYPE_WALL) {
                                 Proto* proto;
-                                protoGetProto(object->pid, &proto);
+                                protoGetProto(object, &proto);
 
                                 bool v20;
                                 ProtoExtendedFlags extendedFlags = proto->scenery.extendedFlags;
@@ -3038,7 +3080,7 @@ ObjectFlags _obj_intersects_with(Object* object, int x, int y)
 }
 
 // 0x48C5C4 obj_create_intersect_list
-int _obj_create_intersect_list(int x, int y, int elevation, ObjectType objectType, ObjectWithFlags** entriesPtr)
+int _obj_create_intersect_list(int x, int y, MapElevation elevation, ObjectType objectType, ObjectWithFlags** entriesPtr)
 {
     int upperLeftTile = tileFromScreenXY(x - 320, y - 240, true);
     *entriesPtr = nullptr;
@@ -3064,7 +3106,7 @@ int _obj_create_intersect_list(int x, int y, int elevation, ObjectType objectTyp
                 }
 
                 if (object->elevation == elevation
-                    && (objectType == OBJ_TYPE_INVALID || objectTypeFromFid(object->fid) == objectType)
+                    && (objectType == OBJ_TYPE_INVALID || FrmId(object).objectType() == objectType)
                     && object != gEgg) {
                     ObjectFlags flags = _obj_intersects_with(object, x, y);
                     if (flags != OBJECT_NONE) {
@@ -3172,25 +3214,25 @@ void _obj_process_seen()
 // 0x48C8E4 object_name
 char* objectGetName(Object* obj)
 {
-    ObjectType objectType = objectTypeFromFid(obj->fid);
+    ObjectType objectType = FrmId(obj).objectType();
     switch (objectType) {
     case OBJ_TYPE_ITEM:
         return itemGetName(obj);
     case OBJ_TYPE_CRITTER:
         return critterGetName(obj);
     default:
-        return protoGetName(obj->pid);
+        return protoGetName(obj);
     }
 }
 
 // 0x48C914 object_description
 char* objectGetDescription(Object* obj)
 {
-    if (objectTypeFromFid(obj->fid) == OBJ_TYPE_ITEM) {
+    if (FrmId(obj).objectType() == OBJ_TYPE_ITEM) {
         return itemGetDescription(obj);
     }
 
-    return protoGetDescription(obj->pid);
+    return protoGetDescription(obj);
 }
 
 // Warm objects cache?
@@ -3205,27 +3247,33 @@ void _obj_preload_art_cache(MapHeaderFlags flags)
     unsigned char arr[FrmId::kMaxFrameId + 1];
     memset(arr, 0, sizeof(arr));
 
-    if ((flags & MAP_HEADER_ELEVATION_0) == MAP_HEADER_NONE) {
-        for (int i = 0; i < SQUARE_GRID_SIZE; i++) {
-            int v3 = _square[0]->fid[i];
-            arr[v3 & 0xFFF] = 1;
-            arr[(v3 >> 16) & 0xFFF] = 1;
-        }
-    }
+    constexpr MapHeaderFlags kElevationFlags[ELEVATION_COUNT] = {
+        MAP_HEADER_ELEVATION_0,
+        MAP_HEADER_ELEVATION_1,
+        MAP_HEADER_ELEVATION_2,
+    };
 
-    if ((flags & MAP_HEADER_ELEVATION_1) == MAP_HEADER_NONE) {
-        for (int i = 0; i < SQUARE_GRID_SIZE; i++) {
-            int v3 = _square[1]->fid[i];
-            arr[v3 & 0xFFF] = 1;
-            arr[(v3 >> 16) & 0xFFF] = 1;
+    for (MapElevation elevation = ELEVATION_FIRST; elevation < ELEVATION_COUNT; elevation++) {
+        if ((flags & kElevationFlags[elevation]) != MAP_HEADER_NONE) {
+            continue;
         }
-    }
 
-    if ((flags & MAP_HEADER_ELEVATION_2) == MAP_HEADER_NONE) {
-        for (int i = 0; i < SQUARE_GRID_SIZE; i++) {
-            int v3 = _square[2]->fid[i];
-            arr[v3 & 0xFFF] = 1;
-            arr[(v3 >> 16) & 0xFFF] = 1;
+        for (int tile = 0; tile < SQUARE_GRID_SIZE; tile++) {
+            int tileFids = _square[elevation]->tileFid[tile];
+            const FloorTileFrmId floorTileFrmId = FloorTileFrmId(tileFids);
+            const RoofTileFrmId roofTileFrmId = RoofTileFrmId(tileFids);
+            TileFrameId floorTileFrameId = floorTileFrmId.frameId<TileFrameId>();
+            if (floorTileFrameId == TileFrameId::Invalid) {
+                floorTileFrameId = TileFrameId::Last;
+            }
+
+            TileFrameId roofTileFrameId = roofTileFrmId.frameId<TileFrameId>();
+            if (roofTileFrameId == TileFrameId::Invalid) {
+                roofTileFrameId = TileFrameId::Last;
+            }
+
+            arr[static_cast<int>(floorTileFrameId)] = 1;
+            arr[static_cast<int>(roofTileFrameId)] = 1;
         }
     }
 
@@ -3234,11 +3282,11 @@ void _obj_preload_art_cache(MapHeaderFlags flags)
     int v11 = gObjectFidsLength;
     int v12 = gObjectFidsLength;
 
-    if (objectTypeFromFid(gObjectFids[v12 - 1]) == OBJ_TYPE_WALL) {
+    if (FrmId(gObjectFids[v12 - 1]).objectType() == OBJ_TYPE_WALL) {
         ObjectType objectType = OBJ_TYPE_ITEM;
         do {
             v11--;
-            objectType = objectTypeFromFid(gObjectFids[v12 - 1]);
+            objectType = FrmId(gObjectFids[v12 - 1]).objectType();
             v12--;
         } while (objectType == OBJ_TYPE_WALL);
         v11++;
@@ -3551,7 +3599,7 @@ static int _obj_save_obj(File* stream, Object* object)
 
     CritterCombatData* combatData = nullptr;
     Object* whoHitMe = nullptr;
-    if (objectTypeFromPid(object->pid) == OBJ_TYPE_CRITTER) {
+    if (ProtoId(object).objectType() == OBJ_TYPE_CRITTER) {
         combatData = &(object->data.critter.combat);
         whoHitMe = objectPrepareWhoHitMeForSave(combatData);
     }
@@ -3560,7 +3608,7 @@ static int _obj_save_obj(File* stream, Object* object)
         return -1;
     }
 
-    if (objectTypeFromPid(object->pid) == OBJ_TYPE_CRITTER) {
+    if (ProtoId(object).objectType() == OBJ_TYPE_CRITTER) {
         combatData->whoHitMe = whoHitMe;
     }
 
@@ -3585,7 +3633,7 @@ static int _obj_save_obj(File* stream, Object* object)
 }
 
 // 0x48D414 obj_load_obj
-static int _obj_load_obj(File* stream, Object** objectPtr, int elevation, Object* owner)
+static int _obj_load_obj(File* stream, Object** objectPtr, MapElevation elevation, Object* owner)
 {
     Object* obj;
 
@@ -3610,14 +3658,14 @@ static int _obj_load_obj(File* stream, Object** objectPtr, int elevation, Object
 
     _obj_fix_violence_settings(&(obj->fid));
 
-    if (!FrmId(obj->fid).exist()) {
+    if (!FrmId(obj).exist()) {
         debugPrint("\nError: invalid object art fid: %u\n", obj->fid);
         // NOTE: Uninline.
         objectDeallocate(&obj);
         return -2;
     }
 
-    if (elevation == -1) {
+    if (elevation == ELEVATION_INVALID) {
         elevation = obj->elevation;
     } else {
         obj->elevation = elevation;
@@ -3681,14 +3729,14 @@ int _obj_save_dude(File* stream)
 int _obj_load_dude(File* stream)
 {
     int savedTile = gDude->tile;
-    int savedElevation = gDude->elevation;
+    MapElevation savedElevation = gDude->elevation;
     Rotation savedRotation = gDude->rotation;
     int savedOid = gDude->id;
 
     scriptsClearDudeScript();
 
     Object* temp = nullptr;
-    int rc = _obj_load_obj(stream, &temp, -1, nullptr);
+    int rc = _obj_load_obj(stream, &temp, ELEVATION_INVALID, nullptr);
     if (rc == -1 || temp == nullptr) {
         gDude->tile = savedTile;
         gDude->elevation = savedElevation;
@@ -3711,7 +3759,7 @@ int _obj_load_dude(File* stream)
     int newTile = gDude->tile;
     gDude->tile = savedTile;
 
-    int newElevation = gDude->elevation;
+    MapElevation newElevation = gDude->elevation;
     gDude->elevation = savedElevation;
 
     Rotation newRotation = gDude->rotation;
@@ -3776,7 +3824,7 @@ static int objectAllocate(Object** objectPtr)
     object->tile = -1;
     object->cid = -1;
     object->outline = OUTLINE_TYPE_NONE;
-    object->pid = -1;
+    object->pid = ProtoId::kEmptyPid;
     object->sid = -1;
     object->owner = nullptr;
     object->scriptIndex = -1;
@@ -3917,11 +3965,11 @@ static void _obj_insert(ObjectListNode* objectListNode)
                 if ((obj->flags & OBJECT_FLAT) == (objectListNode->obj->flags & OBJECT_FLAT)) {
                     bool v11 = false;
                     CacheEntry* a2;
-                    Art* v12 = artLock(FrmId(obj->fid), &a2);
+                    Art* v12 = artLock(FrmId(obj), &a2);
                     if (v12 != nullptr) {
 
                         if (art == nullptr) {
-                            art = artLock(FrmId(objectListNode->obj->fid), &cacheHandle);
+                            art = artLock(FrmId(objectListNode->obj), &cacheHandle);
                         }
 
                         // TODO: Incomplete.
@@ -3990,7 +4038,7 @@ static int _obj_remove(ObjectListNode* a1, ObjectListNode* a2)
 }
 
 // 0x48DB28 obj_connect_to_tile
-static int _obj_connect_to_tile(ObjectListNode* node, int tile, int elevation, Rect* rect)
+static int _obj_connect_to_tile(ObjectListNode* node, int tile, MapElevation elevation, Rect* rect)
 {
     if (node == nullptr) {
         return -1;
@@ -4611,10 +4659,10 @@ static int _obj_adjust_light(Object* obj, int a2, Rect* rect)
 
                                     v14 = (objectListNode->obj->flags & OBJECT_LIGHT_THRU) == OBJECT_NONE;
 
-                                    if (objectTypeFromFid(objectListNode->obj->fid) == OBJ_TYPE_WALL) {
+                                    if (FrmId(objectListNode->obj).objectType() == OBJ_TYPE_WALL) {
                                         if ((objectListNode->obj->flags & OBJECT_FLAT) == OBJECT_NONE) {
                                             Proto* proto;
-                                            protoGetProto(objectListNode->obj->pid, &proto);
+                                            protoGetProto(objectListNode->obj, &proto);
                                             if ((proto->wall.extendedFlags & PROTO_EXT_FLAG_HIDDEN) != PROTO_EXT_FLAG_NONE || (proto->wall.extendedFlags & PROTO_EXT_FLAG_EAST_CORNER) != PROTO_EXT_FLAG_NONE) {
                                                 if (rotation != ROTATION_W
                                                     && rotation != ROTATION_NW
@@ -4691,7 +4739,7 @@ static int _obj_adjust_light(Object* obj, int a2, Rect* rect)
 static void objectDrawOutline(Object* object, Rect* rect)
 {
     CacheEntry* cacheEntry;
-    Art* art = artLock(FrmId(object->fid), &cacheEntry);
+    Art* art = artLock(FrmId(object), &cacheEntry);
     if (art == nullptr) {
         return;
     }
@@ -4956,13 +5004,14 @@ static void objectDrawOutline(Object* object, Rect* rect)
 // 0x48F1B0 obj_render_object
 static void _obj_render_object(Object* object, Rect* rect, int light)
 {
-    ObjectType type = objectTypeFromFid(object->fid);
+    const FrmId frmId = FrmId(object);
+    ObjectType type = frmId.objectType();
     if (artIsObjectTypeHidden(type)) {
         return;
     }
 
     CacheEntry* cacheEntry;
-    Art* art = artLock(FrmId(object->fid), &cacheEntry);
+    Art* art = artLock(frmId, &cacheEntry);
     if (art == nullptr) {
         return;
     }
@@ -5025,7 +5074,7 @@ static void _obj_render_object(Object* object, Rect* rect, int light)
     if (type == OBJ_TYPE_SCENERY || type == OBJ_TYPE_WALL) {
         if ((gDude->flags & OBJECT_HIDDEN) == OBJECT_NONE && (object->flags & OBJECT_FLAG_0xFC000) == OBJECT_NONE) {
             Proto* proto;
-            protoGetProto(object->pid, &proto);
+            protoGetProto(object, &proto);
 
             bool v17;
             ProtoExtendedFlags extendedFlags = proto->critter.extendedFlags;
@@ -5057,7 +5106,7 @@ static void _obj_render_object(Object* object, Rect* rect, int light)
 
             if (v17) {
                 CacheEntry* eggHandle;
-                Art* egg = artLock(FrmId(gEgg->fid), &eggHandle);
+                Art* egg = artLock(FrmId(gEgg), &eggHandle);
                 if (egg == nullptr) {
                     return;
                 }
@@ -5169,12 +5218,13 @@ static void _obj_render_object(Object* object, Rect* rect, int light)
 // 0x48FA14 obj_fix_violence_settings
 void _obj_fix_violence_settings(int* fid)
 {
-    if (objectTypeFromFid(*fid) != OBJ_TYPE_CRITTER) {
+    const FrmId frmId = FrmId(*fid);
+    if (frmId.objectType() != OBJ_TYPE_CRITTER) {
         return;
     }
 
     bool shouldResetViolenceLevel = false;
-    if (gViolenceLevel == -1) {
+    if (gViolenceLevel == VIOLENCE_LEVEL_INVALID) {
         gViolenceLevel = settings.preferences.violence_level;
         shouldResetViolenceLevel = true;
     }
@@ -5202,44 +5252,59 @@ void _obj_fix_violence_settings(int* fid)
         break;
     }
 
-    AnimationType anim = animationTypeFromFid(*fid);
+    AnimationType anim = frmId.animationType();
     if (anim >= start && anim <= end) {
         anim = (anim == ANIM_FALL_BACK_BLOOD_SF)
             ? ANIM_FALL_BACK_SF
             : ANIM_FALL_FRONT_SF;
-        *fid = CritterFrmId(FrmId(*fid).frameId().critter, anim, weaponAnimationFromFid(*fid), rotationFromFid(*fid)).fid();
+        *fid = CritterFrmId(frmId.frameId<CritterFrameId>(), anim, frmId.weaponAnimation(), frmId.rotation()).fid();
     }
 
     if (shouldResetViolenceLevel) {
-        gViolenceLevel = -1;
+        gViolenceLevel = VIOLENCE_LEVEL_INVALID;
     }
 }
 
 // 0x48FB08 obj_preload_sort
-static int _obj_preload_sort(const void* a1, const void* a2)
+static int _obj_preload_sort(const void* fid1, const void* fid2)
 {
-    int v1 = *(int*)a1;
-    int v2 = *(int*)a2;
+    const FrmId frmId1 = FrmId(*(int*)fid1);
+    const FrmId frmId2 = FrmId(*(int*)fid2);
 
-    int v3 = _cd_order[objectTypeFromFid(v1)];
-    int v4 = _cd_order[objectTypeFromFid(v2)];
+    const ObjectType objType1 = frmId1.objectType();
+    const ObjectType objType2 = frmId2.objectType();
 
-    int cmp = v3 - v4;
+    if (!frmId1.valid() || !frmId2.valid()) {
+        return objType1 - objType2;
+    }
+
+    constexpr size_t kCdOrderSize = (sizeof(_cd_order) / sizeof(_cd_order[0]));
+    assert(objType1 < kCdOrderSize && objType2 < kCdOrderSize && "_obj_preload_sort(const void* fid1, const void* fid2) called object type higher than _cd_order size!");
+
+    int cmp;
+    if (objType1 < kCdOrderSize && objType2 < kCdOrderSize) {
+        cmp = _cd_order[objType1] - _cd_order[objType2];
+        if (cmp != 0) {
+            return cmp;
+        }
+    } else {
+        cmp = objType1 - objType2;
+        if (cmp != 0) {
+            return cmp;
+        }
+    }
+
+    cmp = frmId1.frameId() - frmId2.frameId();
     if (cmp != 0) {
         return cmp;
     }
 
-    cmp = frameIdFromFid(v1) - frameIdFromFid(v2);
+    cmp = static_cast<int>(frmId1.weaponAnimation()) - static_cast<int>(frmId2.weaponAnimation());
     if (cmp != 0) {
         return cmp;
     }
 
-    cmp = ((v1 & 0xF000) >> 12) - (((v2 & 0xF000) >> 12));
-    if (cmp != 0) {
-        return cmp;
-    }
-
-    cmp = ((v1 & 0xFF0000) >> 16) - (((v2 & 0xFF0000) >> 16));
+    cmp = frmId1.animationType() - frmId2.animationType();
     return cmp;
 }
 
@@ -5247,7 +5312,7 @@ Object* objectTypedFindById(int id, ObjectType type)
 {
     Object* obj = objectFindFirst();
     while (obj != nullptr) {
-        if (obj->id == id && objectTypeFromPid(obj->pid) == type) {
+        if (obj->id == id && ProtoId(obj).objectType() == type) {
             return obj;
         }
         obj = objectFindNext();
@@ -5256,14 +5321,14 @@ Object* objectTypedFindById(int id, ObjectType type)
     return nullptr;
 }
 
-bool isExitGridAt(int tile, int elevation)
+bool isExitGridAt(int tile, MapElevation elevation)
 {
     ObjectListNode* objectListNode = gObjectListHeadByTile[tile];
     while (objectListNode != nullptr) {
         Object* obj = objectListNode->obj;
         if (obj->elevation == elevation) {
             if ((obj->flags & OBJECT_HIDDEN) == OBJECT_NONE) {
-                if (isExitGridPid(obj->pid)) {
+                if (isExitGridProtoId(obj)) {
                     return true;
                 }
             }
@@ -5307,10 +5372,10 @@ void UniqueObject::reset(Object* p)
     _ptr = p;
 }
 
-int objectCreateWithFrmIdPid(UniqueObject& obj, const FrmId& frmId, int pid)
+int objectCreateWithFrmIdProtoId(UniqueObject& obj, const FrmId& frmId, const ProtoId& protoId)
 {
     Object* raw;
-    int rc = objectCreateWithFrmIdPid(&raw, frmId, pid);
+    int rc = objectCreateWithFrmIdProtoId(&raw, frmId, protoId);
     if (rc != -1) obj.reset(raw);
     return rc;
 }

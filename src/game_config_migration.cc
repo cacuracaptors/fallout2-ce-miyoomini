@@ -237,6 +237,8 @@ namespace {
         // [karma]
         { kSfallMisc, "KarmaFRMs", CONTENT_CONFIG_KARMA_SECTION, "frms" },
         { kSfallMisc, "KarmaPoints", CONTENT_CONFIG_KARMA_SECTION, "points" },
+        // [items]
+        { kSfallMisc, "CanSellUsedGeiger", CONTENT_CONFIG_ITEMS_SECTION, "can_sell_used_geiger", "1" },
         // [dialog]
         { kSfallMisc, "DialogueFix", CONTENT_CONFIG_DIALOG_SECTION, "no_exit_hotkey", "1" },
         { kSfallMisc, "DialogGenderWords", CONTENT_CONFIG_DIALOG_SECTION, "gender_words", "0" },
@@ -308,7 +310,7 @@ namespace {
         assert(sfallConfig != nullptr && migratedConfig != nullptr);
 
         bool migrated = false;
-        for (int index = 0; index < GAME_MOVIE_MAX_COUNT; index++) {
+        for (GameMovie index = MOVIE_FIRST; index < GAME_MOVIE_MAX_COUNT; index++) {
             char sfallKey[16];
             snprintf(sfallKey, sizeof(sfallKey), "Movie%d", index + 1);
 
@@ -482,7 +484,7 @@ static bool contentConfigMigrateFromF2Res(Config* legacyConfig, const char* cont
 
     if (migrated) {
         if (contentConfigEnsureDirectory(contentConfigFilePath)) {
-            if (!configWriteEx(&migratedConfig, contentConfigFilePath, CONFIG_RETAIN_ALL)) {
+            if (!configWriteEx(&migratedConfig, contentConfigFilePath, ConfigFlags::RetainAll)) {
                 debugPrint("Failed to write migrated settings to %s!\n", contentConfigFilePath);
             }
         } else {

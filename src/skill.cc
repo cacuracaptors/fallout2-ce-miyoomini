@@ -15,6 +15,7 @@
 #include "debug.h"
 #include "display_monitor.h"
 #include "game.h"
+#include "game_config.h"
 #include "interface.h"
 #include "item.h"
 #include "message.h"
@@ -31,6 +32,7 @@
 #include "sfall_config.h"
 #include "sfall_script_hooks.h"
 #include "stat.h"
+#include "string_utils.h"
 #include "trait.h"
 
 namespace fallout {
@@ -362,7 +364,7 @@ int skillsInit()
     }
 
     char path[COMPAT_MAX_PATH];
-    snprintf(path, sizeof(path), "%s%s", asc_5186C8, "skill.msg");
+    snprintf(path, sizeof(path), "%s%s", gGameMsgPath, "skill.msg");
 
     if (!messageListLoad(&gSkillsMessageList, path)) {
         return -1;
@@ -473,13 +475,14 @@ int skillGetValue(Object* critter, Skill skill)
         return -5;
     }
 
-    if (critter == nullptr || objectTypeFromPid(critter->pid) != OBJ_TYPE_CRITTER) {
+    const ProtoId protoId = critter;
+    if (protoId.objectType() != OBJ_TYPE_CRITTER) {
         return 0;
     }
 
     Proto* proto;
-    if (protoGetProto(critter->pid, &proto) == -1) {
-        debugPrint("\nError: Failed to get a proto in skillGetValue for critter %d with a pid %d!", critter->id, critter->pid);
+    if (protoGetProto(protoId, &proto) == -1) {
+        debugPrint("\nError: Failed to get a proto in skillGetValue for critter %d with a pid %d!", critter->id, protoId.pid());
         return -5;
     }
 
@@ -573,7 +576,7 @@ int skillAdd(Object* obj, Skill skill)
     }
 
     Proto* proto;
-    if (protoGetProto(obj->pid, &proto) == -1) {
+    if (protoGetProto(obj, &proto) == -1) {
         return -5;
     }
 
@@ -613,7 +616,7 @@ int skillAddForce(Object* obj, Skill skill)
     }
 
     Proto* proto;
-    if (protoGetProto(obj->pid, &proto) == -1) {
+    if (protoGetProto(obj, &proto) == -1) {
         return -5;
     }
 
@@ -675,7 +678,7 @@ int skillSub(Object* critter, Skill skill)
     int unspentSp = pcGetStat(PC_STAT_UNSPENT_SKILL_POINTS);
 
     Proto* proto;
-    if (protoGetProto(critter->pid, &proto) == -1) {
+    if (protoGetProto(critter, &proto) == -1) {
         return -5;
     }
 
@@ -725,7 +728,7 @@ int skillSubForce(Object* obj, Skill skill)
         return -5;
     }
 
-    if (protoGetProto(obj->pid, &proto) == -1) {
+    if (protoGetProto(obj, &proto) == -1) {
         return -5;
     }
 
@@ -739,10 +742,10 @@ int skillSubForce(Object* obj, Skill skill)
 }
 
 // 0x4AAAA4
-int skillRoll(Object* critter, Skill skill, int modifier, int* howMuch)
+Roll skillRoll(Object* critter, Skill skill, int modifier, int* howMuch)
 {
     if (!skillIsValid(skill)) {
-        return ROLL_FAILURE;
+        return Roll::Failure;
     }
 
     if (critter == gDude && skill != SKILL_STEAL) {
@@ -885,7 +888,7 @@ int skillUse(Object* obj, Object* target, Skill skill, int skillBonus)
             // 514: It's dead, get over it.
             messageListItem.num = 512 + randomBetween(0, 2);
             if (messageListGetItem(&gSkillsMessageList, &messageListItem)) {
-                debugPrint(messageListItem.text);
+                debugPrint("%s", messageListItem.text);
             }
 
             break;
@@ -894,14 +897,14 @@ int skillUse(Object* obj, Object* target, Skill skill, int skillBonus)
         if (currentHp < maximumHp) {
             paletteFadeTo(gPaletteBlack);
 
-            int roll;
+            Roll roll;
             if (critterGetBodyType(target) == BODY_TYPE_ROBOTIC) {
-                roll = ROLL_FAILURE;
+                roll = Roll::Failure;
             } else {
                 roll = skillRoll(obj, skill, skillOrCritSuccessBonus, &hpToHeal);
             }
 
-            if (roll == ROLL_SUCCESS || roll == ROLL_CRITICAL_SUCCESS) {
+            if (roll == Roll::Success || roll == Roll::CriticalSuccess) {
                 hpToHeal = randomBetween(minimumHpToHeal + 1, maximumHpToHeal + 5);
                 critterAdjustHitPoints(target, hpToHeal);
 
@@ -952,7 +955,7 @@ int skillUse(Object* obj, Object* target, Skill skill, int skillBonus)
                 }
 
                 if (target == gDude) {
-                    strcpy(text, messageListItem.text);
+                    stringCopy(text, messageListItem.text);
                 } else {
                     snprintf(text, sizeof(text), messageListItem.text, objectGetName(target));
                 }
@@ -1002,7 +1005,7 @@ int skillUse(Object* obj, Object* target, Skill skill, int skillBonus)
                     if ((target->data.critter.combat.results & flags[index]) != 0) {
                         damageHealingAttempts++;
 
-                        int roll = skillRoll(obj, skill, skillOrCritSuccessBonus, &hpToHeal);
+                        Roll roll = skillRoll(obj, skill, skillOrCritSuccessBonus, &hpToHeal);
 
                         // 530: damaged eye
                         // 531: crippled left arm
@@ -1016,7 +1019,7 @@ int skillUse(Object* obj, Object* target, Skill skill, int skillBonus)
 
                         MessageListItem prefix;
 
-                        if (roll == ROLL_SUCCESS || roll == ROLL_CRITICAL_SUCCESS) {
+                        if (roll == Roll::Success || roll == Roll::CriticalSuccess) {
                             target->data.critter.combat.results &= ~flags[index];
                             target->data.critter.combat.maneuver &= ~CRITTER_MANUEVER_FLEEING;
 
@@ -1047,15 +1050,15 @@ int skillUse(Object* obj, Object* target, Skill skill, int skillBonus)
                 }
             }
 
-            int roll;
+            Roll roll;
             if (critterGetBodyType(target) == BODY_TYPE_ROBOTIC) {
-                roll = ROLL_FAILURE;
+                roll = Roll::Failure;
             } else {
                 int skillValue = skillGetValue(obj, skill);
                 roll = randomRoll(skillValue, skillOrCritSuccessBonus, &hpToHeal);
             }
 
-            if (roll == ROLL_SUCCESS || roll == ROLL_CRITICAL_SUCCESS) {
+            if (roll == Roll::Success || roll == Roll::CriticalSuccess) {
                 hpToHeal = randomBetween(minimumHpToHeal + 4, maximumHpToHeal + 10);
                 critterAdjustHitPoints(target, hpToHeal);
 
@@ -1112,7 +1115,7 @@ int skillUse(Object* obj, Object* target, Skill skill, int skillBonus)
                 }
 
                 if (target == gDude) {
-                    strcpy(text, messageListItem.text);
+                    stringCopy(text, messageListItem.text);
                 } else {
                     snprintf(text, sizeof(text), messageListItem.text, objectGetName(target));
                 }
@@ -1188,7 +1191,7 @@ int skillUse(Object* obj, Object* target, Skill skill, int skillBonus)
                 if ((target->data.critter.combat.results & flags[index]) != 0) {
                     damageHealingAttempts++;
 
-                    int roll = skillRoll(obj, skill, skillOrCritSuccessBonus, &hpToHeal);
+                    Roll roll = skillRoll(obj, skill, skillOrCritSuccessBonus, &hpToHeal);
 
                     // 530: damaged eye
                     // 531: crippled left arm
@@ -1202,7 +1205,7 @@ int skillUse(Object* obj, Object* target, Skill skill, int skillBonus)
 
                     MessageListItem prefix;
 
-                    if (roll == ROLL_SUCCESS || roll == ROLL_CRITICAL_SUCCESS) {
+                    if (roll == Roll::Success || roll == Roll::CriticalSuccess) {
                         target->data.critter.combat.results &= ~flags[index];
                         target->data.critter.combat.maneuver &= ~CRITTER_MANUEVER_FLEEING;
 
@@ -1232,9 +1235,9 @@ int skillUse(Object* obj, Object* target, Skill skill, int skillBonus)
             }
 
             int skillValue = skillGetValue(obj, skill);
-            int roll = randomRoll(skillValue, skillOrCritSuccessBonus, &hpToHeal);
+            Roll roll = randomRoll(skillValue, skillOrCritSuccessBonus, &hpToHeal);
 
-            if (roll == ROLL_SUCCESS || roll == ROLL_CRITICAL_SUCCESS) {
+            if (roll == Roll::Success || roll == Roll::CriticalSuccess) {
                 hpToHeal = randomBetween(minimumHpToHeal + 4, maximumHpToHeal + 10);
                 critterAdjustHitPoints(target, hpToHeal);
 
@@ -1305,7 +1308,7 @@ int skillUse(Object* obj, Object* target, Skill skill, int skillBonus)
     default:
         messageListItem.num = 510; // skill_use: invalid skill used.
         if (messageListGetItem(&gSkillsMessageList, &messageListItem)) {
-            debugPrint(messageListItem.text);
+            debugPrint("%s", messageListItem.text);
         }
 
         return -1;
@@ -1355,7 +1358,7 @@ SkillStealResult skillsPerformStealing(Object* thief, Object* target, Object* it
         // -4% per item size
         stealModifier -= 4 * itemGetSize(item);
 
-        if (objectTypeFromFid(target->fid) == OBJ_TYPE_CRITTER) {
+        if (FrmId(target).objectType() == OBJ_TYPE_CRITTER) {
             // check facing: -25% if face to face
             if (_is_hit_from_front(thief, target)) {
                 stealModifier -= 25;
@@ -1372,22 +1375,22 @@ SkillStealResult skillsPerformStealing(Object* thief, Object* target, Object* it
         stealChance = 95;
     }
 
-    int stealRoll;
+    Roll stealRoll;
     if (thief == gDude && objectIsPartyMember(target)) {
-        stealRoll = ROLL_CRITICAL_SUCCESS;
+        stealRoll = Roll::CriticalSuccess;
     } else {
         int criticalChance = critterGetStat(thief, STAT_CRITICAL_CHANCE);
         stealRoll = randomRoll(stealChance, criticalChance, &howMuch);
     }
 
-    int catchRoll;
-    if (stealRoll == ROLL_CRITICAL_SUCCESS) {
-        catchRoll = ROLL_CRITICAL_FAILURE;
-    } else if (stealRoll == ROLL_CRITICAL_FAILURE) {
-        catchRoll = ROLL_SUCCESS;
+    Roll catchRoll;
+    if (stealRoll == Roll::CriticalSuccess) {
+        catchRoll = Roll::CriticalFailure;
+    } else if (stealRoll == Roll::CriticalFailure) {
+        catchRoll = Roll::Success;
     } else {
         int catchChance;
-        if (objectTypeFromPid(target->pid) == OBJ_TYPE_CRITTER) {
+        if (ProtoId(target).objectType() == OBJ_TYPE_CRITTER) {
             catchChance = skillGetValue(target, SKILL_STEAL) - stealModifier;
         } else {
             catchChance = 30 - stealModifier;
@@ -1401,7 +1404,7 @@ SkillStealResult skillsPerformStealing(Object* thief, Object* target, Object* it
     MessageListItem messageListItem;
     char text[60];
 
-    if (catchRoll != ROLL_SUCCESS && catchRoll != ROLL_CRITICAL_SUCCESS) {
+    if (catchRoll != Roll::Success && catchRoll != Roll::CriticalSuccess) {
         // 571: You steal the %s.
         // 573: You plant the %s.
         messageListItem.num = isPlanting ? 573 : 571;
@@ -1440,7 +1443,7 @@ int skillGetGameDifficultyModifier(Skill skill)
     case SKILL_BARTER:
     case SKILL_GAMBLING:
     case SKILL_OUTDOORSMAN: {
-        int gameDifficulty = settings.preferences.game_difficulty;
+        GameDifficulty gameDifficulty = settings.preferences.game_difficulty;
 
         if (gameDifficulty == GAME_DIFFICULTY_HARD) {
             return -10;

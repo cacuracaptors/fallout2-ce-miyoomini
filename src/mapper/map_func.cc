@@ -45,10 +45,17 @@ constexpr const char* kBlockViewListName[9] = {
     "block2", "block3", "block4", "block5",
     "block2", "block3", "scrblk", "trnblk", "blkexit"
 };
-constexpr int kBlockingProtoList[9] = {
-    0x02000043, 0x02000080, 0x0200008D, 0x02000158,
-    0x0300026D, 0x0300026E, 0x0500000C, 0x05000005,
-    0x02000031
+
+constexpr ProtoId kBlockingProtoIds[9] = {
+    SceneryProtoTypeId(67),
+    SceneryProtoTypeId(128),
+    SceneryProtoTypeId(141),
+    SceneryProtoTypeId(344),
+    WallProtoTypeId(621),
+    WallProtoTypeId(622),
+    MiscProtoTypeId(12),
+    MiscProtoTypeId(5),
+    SceneryProtoTypeId(49)
 };
 
 // 0x4825B0
@@ -73,7 +80,7 @@ void place_entrance_hex()
     while (inputGetInput() != -2) {
     }
 
-    if ((mouseGetEvent() & MOUSE_EVENT_LEFT_BUTTON_DOWN) != 0) {
+    if ((mouseGetEvent() & MouseButtonEvent::LeftButtonDown) != MouseButtonEvent::None) {
         if (_mouse_click_in(0, 0, _scr_size.right - _scr_size.left, _scr_size.bottom - _scr_size.top - 100)) {
             mouseGetPosition(&x, &y);
 
@@ -102,7 +109,7 @@ void pick_region(Rect* rect)
     while (true) {
         sharedFpsLimiter.mark();
         bool got = inputGetInput() == -2
-            && (mouseGetEvent() & MOUSE_EVENT_LEFT_BUTTON_DOWN) != 0;
+            && (mouseGetEvent() & MouseButtonEvent::LeftButtonDown) != MouseButtonEvent::None;
         renderPresent();
         sharedFpsLimiter.throttle();
         if (got) break;
@@ -115,7 +122,7 @@ void pick_region(Rect* rect)
     temp.bottom = y;
     *rect = temp;
 
-    while ((mouseGetEvent() & MOUSE_EVENT_LEFT_BUTTON_UP) == 0) {
+    while ((mouseGetEvent() & MouseButtonEvent::LeftButtonUp) == MouseButtonEvent::None) {
         sharedFpsLimiter.mark();
         inputGetInput();
 
@@ -208,13 +215,28 @@ void erase_rect(Rect* rect)
 }
 
 // 0x484400
-int toolbar_proto(ObjectType type, int id)
+ProtoId toolbar_proto(ObjectType type, int id)
 {
     if (id < proto_max_id(type)) {
-        return (type << 24) | id;
-    } else {
-        return -1;
+        switch (type) {
+        case OBJ_TYPE_ITEM:
+            return static_cast<ItemProtoTypeId>(id);
+        case OBJ_TYPE_CRITTER:
+            return static_cast<CritterProtoTypeId>(id);
+        case OBJ_TYPE_SCENERY:
+            return static_cast<SceneryProtoTypeId>(id);
+        case OBJ_TYPE_WALL:
+            return static_cast<WallProtoTypeId>(id);
+        case OBJ_TYPE_TILE:
+            return static_cast<TileProtoTypeId>(id);
+        case OBJ_TYPE_MISC:
+            return static_cast<MiscProtoTypeId>(id);
+        default:
+            return ProtoId::Empty();
+        }
     }
+
+    return ProtoId::Empty();
 }
 
 // 0x485D44
@@ -243,7 +265,7 @@ void map_toggle_block_obj_viewing(int mode)
         if (obj == gDude || obj == gGameMouseBouncingCursor || (obj->flags & OBJECT_NO_SAVE)) continue;
 
         for (int index = 0; index < 9; index++) {
-            if (kBlockingProtoList[index] != obj->pid) continue;
+            if (kBlockingProtoIds[index] != ProtoId(obj)) continue;
 
             if (block_obj_view_on) {
                 if (blockedFidCache[index] != 0) {
@@ -252,7 +274,7 @@ void map_toggle_block_obj_viewing(int mode)
             } else {
                 if (blockedFidCache[index] == 0) {
                     Proto* proto;
-                    if (protoGetProto(obj->pid, &proto) == 0) {
+                    if (protoGetProto(obj, &proto) == 0) {
                         blockedFidCache[index] = proto->fid;
                     }
                 }
@@ -343,7 +365,7 @@ int pickHex()
 {
     constexpr int kIsoMarginTop = 16;
 
-    int elevation = gElevation;
+    MapElevation elevation = gElevation;
 
     while (true) {
         sharedFpsLimiter.mark();
@@ -351,8 +373,8 @@ int pickHex()
         int keyCode = inputGetInput();
 
         if (keyCode == -2) {
-            int buttons = mouseGetEvent();
-            if (buttons & MOUSE_EVENT_LEFT_BUTTON_DOWN) {
+            MouseButtonEvent buttons = mouseGetEvent();
+            if ((buttons & MouseButtonEvent::LeftButtonDown) != MouseButtonEvent::None) {
                 int isoRight = windowGetWidth(gIsoWindow) - 1;
                 int isoBottom = windowGetHeight(gIsoWindow) - 1;
                 if (_mouse_click_in(0, kIsoMarginTop, isoRight, isoBottom)) {
@@ -376,7 +398,7 @@ int pickHex()
         }
 
         if (keyCode == KEY_PAGE_UP || keyCode == KEY_PAGE_DOWN) {
-            int newElevation = elevation;
+            MapElevation newElevation = elevation;
             if (keyCode == KEY_PAGE_UP) {
                 if (elevation < ELEVATION_COUNT - 1) {
                     newElevation = elevation + 1;
@@ -429,7 +451,7 @@ ObjectType pickToolbar(int topY)
 }
 
 // place_object_
-void placeObject(int pid, const FrmId& frmId)
+void placeObject(const ProtoId& protoId, const FrmId& frmId)
 {
     int x, y;
     mouseGetPosition(&x, &y);
@@ -439,7 +461,7 @@ void placeObject(int pid, const FrmId& frmId)
     }
 
     Object* obj;
-    if (objectCreateWithFrmIdPid(&obj, frmId, pid) == -1) {
+    if (objectCreateWithFrmIdProtoId(&obj, frmId, protoId) == -1) {
         return;
     }
 
@@ -449,7 +471,7 @@ void placeObject(int pid, const FrmId& frmId)
 }
 
 // place_tile_
-void placeTile(int pid, const FrmId& frmId)
+void placeTile(const ProtoId& protoId, const FrmId& frmId)
 {
     int x, y;
     mouseGetPosition(&x, &y);
@@ -458,41 +480,41 @@ void placeTile(int pid, const FrmId& frmId)
         return;
     }
 
-    int newArt = frmId.frameId().id;
-    int* squarePtr = &_square[gElevation]->fid[squareTile];
+    TileFrameId newFrameId = frmId.frameId<TileFrameId>();
+    if (newFrameId == TileFrameId::Invalid) {
+        newFrameId = TileFrameId::Last;
+    }
+
+    int* squarePtr = &_square[gElevation]->tileFid[squareTile];
     int oldValue = *squarePtr;
 
+    const FloorTileFrmId oldFloorFrmId = FloorTileFrmId(oldValue);
+    const RoofTileFrmId oldRoofFrmId = RoofTileFrmId(oldValue);
+
+    int sx, sy;
+
     if (tileRoofIsVisible()) {
-        const TileFrmId oldRoofFrmId = static_cast<TileFrameId>(frameIdFromFid(oldValue >> 16));
-        if (oldRoofFrmId == frmId) {
+        if (FrmId(oldRoofFrmId.frameId<TileFrameId>()) == frmId) {
             return;
         }
 
-        int oldRoofWord = oldValue >> 16;
-        int roofRotation = (oldRoofWord & 0xF000) >> 12;
-        int newRoofWord = roofRotation | newArt;
-        *squarePtr = (newRoofWord << 16) | (oldValue & 0xFFFF);
+        const RoofTileFrmId newRoofFrmId = RoofTileFrmId(newFrameId, oldRoofFrmId.flags());
+        *squarePtr = TileFrmId(oldFloorFrmId, newRoofFrmId).fid();
 
-        int sx, sy;
         squareTileToRoofScreenXY(squareTile, &sx, &sy, gElevation);
-        Rect rect = { sx, sy, sx + 80, sy + 36 };
-        tileWindowRefreshRect(&rect, gElevation);
     } else {
-        const TileFrmId oldFloorFrmId = static_cast<TileFrameId>(frameIdFromFid(oldValue));
-        if (oldFloorFrmId == frmId) {
+        if (FrmId(oldFloorFrmId.frameId<TileFrameId>()) == frmId) {
             return;
         }
 
-        int oldFloorWord = oldValue & 0xFFFF;
-        int floorRotation = (oldFloorWord & 0xF000) >> 12;
-        int newFloorWord = floorRotation | newArt;
-        *squarePtr = (oldValue & 0xFFFF0000) | newFloorWord;
+        const FloorTileFrmId newFloorFid = FloorTileFrmId(newFrameId, oldFloorFrmId.flags());
+        *squarePtr = TileFrmId(newFloorFid, oldRoofFrmId).fid();
 
-        int sx, sy;
         squareTileToScreenXY(squareTile, &sx, &sy, gElevation);
-        Rect rect = { sx, sy, sx + 80, sy + 36 };
-        tileWindowRefreshRect(&rect, gElevation);
     }
+
+    Rect rect = { sx, sy, sx + 80, sy + 36 };
+    tileWindowRefreshRect(&rect, gElevation);
 }
 
 // mpMouseCheckScrolling
@@ -578,8 +600,8 @@ static void mp_run_placement_loop(PlaceFn place)
         bool exit = false;
 
         if (keyCode == -2) {
-            int mouseEvent = mouseGetEvent();
-            if ((mouseEvent & MOUSE_EVENT_LEFT_BUTTON_DOWN) != 0) {
+            MouseButtonEvent mouseEvent = mouseGetEvent();
+            if ((mouseEvent & MouseButtonEvent::LeftButtonDown) != MouseButtonEvent::None) {
                 int ix, iy;
                 get_input_position(&ix, &iy);
                 if (_mouse_click_in(0, 0,
@@ -588,7 +610,7 @@ static void mp_run_placement_loop(PlaceFn place)
                     place(ix, iy);
                     tileWindowRefresh();
                 }
-            } else if ((mouseEvent & MOUSE_EVENT_RIGHT_BUTTON_DOWN) != 0) {
+            } else if ((mouseEvent & MouseButtonEvent::RightButtonDown) != MouseButtonEvent::None) {
                 exit = true;
             }
         }
@@ -654,11 +676,12 @@ static void copy_object_to_tile_pobj(int srcFid, int dstTile, Object* srcObj, bo
     bool useArtNotProtos = settings.mapper.use_art_not_protos;
 
     Proto* proto = nullptr;
+    const ProtoId protoId = srcObj;
     bool gatePassed = useArtNotProtos
         || existing == nullptr
         || srcObj == nullptr
-        || objectTypeFromPid(srcObj->pid) == OBJ_TYPE_TILE
-        || protoGetProto(srcObj->pid, &proto) == -1
+        || protoId.objectType() == OBJ_TYPE_TILE
+        || protoGetProto(protoId, &proto) == -1
         || (proto != nullptr && (proto->flags & 0x10) != 0);
 
     if (!gatePassed) {
@@ -680,7 +703,7 @@ static void copy_object_to_tile_pobj(int srcFid, int dstTile, Object* srcObj, bo
 
     if (existing != nullptr) {
         // Stackable item (PID 41 in F2 == bottle caps) auto-merges by bumping count.
-        if (existing->pid == 41) {
+        if (ProtoId(existing) == ItemProtoTypeId::Money) {
             existing->data.item.misc.charges++;
         }
         return;
@@ -695,7 +718,7 @@ static void copy_object_to_tile_pobj(int srcFid, int dstTile, Object* srcObj, bo
     int newFid = srcFid;
     if (block_obj_view_on) {
         for (int i = 0; i < 9; i++) {
-            if (kBlockingProtoList[i] == srcObj->pid) {
+            if (kBlockingProtoIds[i] == ProtoId(srcObj)) {
                 newFid = fidShowList[i];
                 break;
             }
@@ -717,7 +740,7 @@ static void copy_object_to_tile_pobj(int srcFid, int dstTile, Object* srcObj, bo
         if (sid != -1) {
             Script* script = nullptr;
             if (scriptGetScript(sid, &script) != -1) {
-                if (SID_TYPE(sid) == 1 /* spatial */) {
+                if (scriptTypeFromSid(sid) == SCRIPT_TYPE_SPATIAL) {
                     script->sp.built_tile = (gElevation << 29) | dstTile;
                 }
                 script->owner = copy;
@@ -725,7 +748,7 @@ static void copy_object_to_tile_pobj(int srcFid, int dstTile, Object* srcObj, bo
         }
     }
 
-    ObjectType newType = objectTypeFromFid(newFid);
+    ObjectType newType = FrmId(newFid).objectType();
     if (newType == OBJ_TYPE_CRITTER || newType == OBJ_TYPE_MISC) {
         objectSetRotation(copy, rotation, nullptr);
     }
@@ -753,7 +776,7 @@ void copyObject(int filterType)
 
     mpCopyCount = 0;
 
-    int elevation = gElevation;
+    MapElevation elevation = gElevation;
     // Walk the region cell-by-cell and add matching objects. Outer loop skips by 12 vertically
     // and 32 horizontally to match the hex stride used by the original (one unit per visual hex).
     for (int sy = region.top + 8; sy < region.bottom; sy += 12) {
@@ -769,7 +792,7 @@ void copyObject(int filterType)
                     || obj == gGameMouseBouncingCursor
                     || obj == gGameMouseHexCursor
                     || (obj->flags & OBJECT_HIDDEN) != OBJECT_NONE
-                    || filterType != -1 && objectTypeFromFid(obj->fid) != filterType) continue;
+                    || filterType != -1 && FrmId(obj).objectType() != filterType) continue;
 
                 if (mpCopyCount >= kMaxCopyEntries) {
                     _win_msg("Too many objects in region!", 80, 80, COLOR_RED | DRAW_TEXT_FLAG_NONE);
@@ -812,7 +835,7 @@ void copyObject(int filterType)
 // elevation `elevation`. Returns the number of tiles written. Hex-grid screen-coords aren't
 // monotonic with square-grid coords (the iso projection is angled), so the bounding box is
 // computed by taking min/max of all four screen-rect corners.
-static int squares_in_rect(const Rect* screenRect, int elevation, int* outTiles, int cap)
+static int squares_in_rect(const Rect* screenRect, MapElevation elevation, int* outTiles, int cap)
 {
     if (cap <= 0) return 0;
 
@@ -885,7 +908,7 @@ void copyTile()
     int srcDx[kMaxTiles];
     int srcDy[kMaxTiles];
     for (int i = 0; i < srcCount; i++) {
-        TileFrameId floorArt = static_cast<TileFrameId>(frameIdFromFid(_square[gElevation]->fid[srcTiles[i]]));
+        TileFrameId floorArt = FloorTileFrmId(_square[gElevation]->tileFid[srcTiles[i]]).frameId<TileFrameId>();
         srcFrmId[i] = floorArt;
 
         int sx, sy;
@@ -903,10 +926,15 @@ void copyTile()
             int dstSy = iy + srcDy[i] + 12;
             int dstSquare = squareTileFromScreenXY(dstSx, dstSy, gElevation);
             if (dstSquare != -1) {
-                int* word = &_square[gElevation]->fid[dstSquare];
-                int rotBits = (*word & 0xF000) >> 12;
-                int newFloor = srcFrmId[i].frameId().id | rotBits;
-                *word = (*word & 0xFFFF0000) | (newFloor & 0xFFFF);
+                int* tileFid = &_square[gElevation]->tileFid[dstSquare];
+                const FloorTileFrmId floorFrmId = FloorTileFrmId(*tileFid);
+                const RoofTileFrmId roofFrmId = RoofTileFrmId(*tileFid);
+                TileFrameId newFloorFrameId = srcFrmId[i].frameId<TileFrameId>();
+                if (newFloorFrameId == TileFrameId::Invalid) {
+                    newFloorFrameId = TileFrameId::Last;
+                }
+                const FloorTileFrmId newFloorFrmId = FloorTileFrmId(newFloorFrameId, floorFrmId.flags());
+                *tileFid = TileFrmId(newFloorFrmId, roofFrmId).fid();
             }
         }
     });
@@ -925,8 +953,8 @@ void eraseObject()
         bool exit = false;
 
         if (keyCode == -2) {
-            int mouseEvent = mouseGetEvent();
-            if ((mouseEvent & MOUSE_EVENT_LEFT_BUTTON_DOWN) != 0) {
+            MouseButtonEvent mouseEvent = mouseGetEvent();
+            if ((mouseEvent & MouseButtonEvent::LeftButtonDown) != MouseButtonEvent::None) {
                 if (!_mouse_click_in(0, 0,
                         _scr_size.right - _scr_size.left,
                         _scr_size.bottom - _scr_size.top - 100)) {
@@ -938,7 +966,7 @@ void eraseObject()
                          obj != nullptr;
                          obj = objectFindNextAtElevation()) {
                         if (obj == gDude) continue;
-                        if (objectTypeFromPid(obj->pid) == OBJ_TYPE_INTERFACE) continue;
+                        if (!ProtoId(obj).valid()) continue;
                         if ((obj->flags & OBJECT_HIDDEN) != OBJECT_NONE) continue;
                         if (obj == gGameMouseBouncingCursor) continue;
                         if (obj == gGameMouseHexCursor) continue;
@@ -954,16 +982,16 @@ void eraseObject()
 
                     if (hit != nullptr) {
                         // Don't destroy exit-grid markers (interface art, id=3).
-                        if (FrmId(hit->fid) != InterfaceFrameId::ExitGridMarker) {
+                        if (FrmId(hit) != InterfaceFrameId::ExitGridMarker) {
                             Rect rect;
-                            int elev = hit->elevation;
+                            MapElevation elev = hit->elevation;
                             reg_anim_clear(hit);
                             objectDestroy(hit, &rect);
                             tileWindowRefreshRect(&rect, elev);
                         }
                     }
                 }
-            } else if ((mouseEvent & MOUSE_EVENT_RIGHT_BUTTON_DOWN) != 0) {
+            } else if ((mouseEvent & MouseButtonEvent::RightButtonDown) != MouseButtonEvent::None) {
                 exit = true;
             }
         }
@@ -1031,7 +1059,7 @@ static void mapper_shift_map_once(int dx, int dy)
         snap.push_back({ obj, obj->tile });
     }
 
-    int* sq = _square[gElevation]->fid;
+    int* sq = _square[gElevation]->tileFid;
 
     // Apply the per-object shift / drop rule. `keepRow`/`keepCol` decide whether an old tile
     // survives; `newTile` maps a surviving tile to its destination.
@@ -1119,7 +1147,7 @@ void mapper_shift_map()
         bool done = false;
 
         if (keyCode == -2) {
-            if ((mouseGetEvent() & MOUSE_EVENT_RIGHT_BUTTON_DOWN) != 0) {
+            if ((mouseGetEvent() & MouseButtonEvent::RightButtonDown) != MouseButtonEvent::None) {
                 done = true;
             }
         } else {
@@ -1160,12 +1188,13 @@ void mapper_shift_map_elev()
         return;
     }
 
-    int destElev = gElevation + 1;
-    if (win_get_num_i(&destElev, 1, 3, false, "Destination elevation:", 100, 100) == -1) {
+    int destElevNumber = gElevation + 1;
+    if (win_get_num_i(&destElevNumber, ELEVATION_SECOND, ELEVATION_COUNT, false, "Destination elevation:", 100, 100) == -1) {
         return;
     }
 
-    destElev -= 1;
+    destElevNumber -= 1;
+    MapElevation destElev = static_cast<MapElevation>(destElevNumber);
     if (destElev == gElevation) {
         return;
     }
@@ -1203,20 +1232,20 @@ void mapper_shift_map_elev()
 
     // Copy the tile (floor + roof) data to the destination elevation, then strip floor + roof
     // tiles in the source elevation back to "blank" art (id=1).
-    memcpy(_square[destElev]->fid, _square[gElevation]->fid, 40000);
+    memcpy(_square[destElev]->tileFid, _square[gElevation]->tileFid, 40000);
 
-    constexpr int kBlankFrameId = static_cast<int>(TileFrameId::Grid);
+    constexpr TileFrameId kBlankFrameId = TileFrameId::Grid;
 
     // Match the original mapper's tile word format (preserved here even though the rotation
     // bits end up overlapping the low nibble of the art id — same convention as placeTile).
-    int* src = _square[gElevation]->fid;
+    int* src = _square[gElevation]->tileFid;
     for (int i = 0; i < SQUARE_GRID_SIZE; i++) {
         int v = src[i];
-        int floorRot = (v & 0xF000) >> 12;
-        int roofRot = ((v >> 16) & 0xF000) >> 12;
-        int newRoofWord = kBlankFrameId | roofRot;
-        int newFloorWord = kBlankFrameId | floorRot;
-        src[i] = (newRoofWord << 16) | (newFloorWord & 0xFFFF);
+        const FloorTileFrmId floorTileFrmId = FloorTileFrmId(v);
+        const RoofTileFrmId roofTileFrmId = RoofTileFrmId(v);
+        const RoofTileFrmId newRoofFrmId = RoofTileFrmId(kBlankFrameId, roofTileFrmId.flags());
+        const FloorTileFrmId newFloorFrmId = FloorTileFrmId(kBlankFrameId, floorTileFrmId.flags());
+        src[i] = TileFrmId(newFloorFrmId, newRoofFrmId).fid();
     }
 
     // Move all spatial scripts from source elevation to destination, plus any exit-grid objects
@@ -1254,12 +1283,13 @@ void mapper_copy_map_elev()
         return;
     }
 
-    int destElev = gElevation + 1;
-    if (win_get_num_i(&destElev, 1, 3, false, "Destination elevation:", 100, 100) == -1) {
+    int destElevNumber = gElevation + 1;
+    if (win_get_num_i(&destElevNumber, ELEVATION_SECOND, ELEVATION_COUNT, false, "Destination elevation:", 100, 100) == -1) {
         return;
     }
 
-    destElev -= 1;
+    destElevNumber -= 1;
+    MapElevation destElev = static_cast<MapElevation>(destElevNumber);
     if (destElev == gElevation) {
         return;
     }
@@ -1302,7 +1332,7 @@ void mapper_copy_map_elev()
                 || obj == gGameMouseHexCursor
                 || obj == gDude
                 || (obj->flags & OBJECT_NO_REMOVE) != OBJECT_NONE
-                || obj->pid == -1)) {
+                || ProtoId(obj) == ProtoId::Empty())) {
             obj = objectFindNextAtElevation();
         }
         if (obj == nullptr) break;
@@ -1322,7 +1352,7 @@ void mapper_copy_map_elev()
         obj = objectFindFirstAtElevation(gElevation);
     }
 
-    memcpy(_square[destElev]->fid, _square[gElevation]->fid, 40000);
+    memcpy(_square[destElev]->tileFid, _square[gElevation]->tileFid, 40000);
     mapSetElevation(destElev);
     tileWindowRefresh();
 }

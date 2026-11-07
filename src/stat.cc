@@ -159,7 +159,7 @@ int statsInit()
     }
 
     char path[COMPAT_MAX_PATH];
-    snprintf(path, sizeof(path), "%s%s", asc_5186C8, "stat.msg");
+    snprintf(path, sizeof(path), "%s%s", gGameMsgPath, "stat.msg");
 
     if (!messageListLoad(&gStatsMessageList, path)) {
         return -1;
@@ -323,7 +323,7 @@ void statSetNpcMinimum(Stat stat, int minimum)
 // 0x4AEF48
 int critterGetStat(Object* critter, Stat stat)
 {
-    if (objectTypeFromPid(critter->pid) != OBJ_TYPE_CRITTER) {
+    if (ProtoId(critter).objectType() != OBJ_TYPE_CRITTER) {
         return 0;
     }
     int value;
@@ -357,7 +357,7 @@ int critterGetStat(Object* critter, Stat stat)
                             Object* item2 = critterGetItem2(gDude);
                             if (item2 != nullptr) {
                                 if (itemGetType(item2) == ITEM_TYPE_WEAPON) {
-                                    if (weaponGetAnimationCode(item2) != WEAPON_ANIMATION_NONE) {
+                                    if (weaponGetAnimationCode(item2) != WeaponAnimation::None) {
                                         hasWeapon = true;
                                     }
                                 }
@@ -367,7 +367,7 @@ int critterGetStat(Object* critter, Stat stat)
                                 Object* item1 = critterGetItem1(gDude);
                                 if (item1 != nullptr) {
                                     if (itemGetType(item1) == ITEM_TYPE_WEAPON) {
-                                        if (weaponGetAnimationCode(item1) != WEAPON_ANIMATION_NONE) {
+                                        if (weaponGetAnimationCode(item1) != WeaponAnimation::None) {
                                             hasWeapon = true;
                                         }
                                     }
@@ -423,12 +423,12 @@ int critterGetStat(Object* critter, Stat stat)
                     bool hasMirrorShades = false;
 
                     Object* item2 = critterGetItem2(critter);
-                    if (item2 != nullptr && item2->pid == PROTO_ID_MIRRORED_SHADES) {
+                    if (ProtoId(item2) == ItemProtoTypeId::MirroredShades) {
                         hasMirrorShades = true;
                     }
 
                     Object* item1 = critterGetItem1(critter);
-                    if (item1 != nullptr && item1->pid == PROTO_ID_MIRRORED_SHADES) {
+                    if (ProtoId(item1) == ItemProtoTypeId::MirroredShades) {
                         hasMirrorShades = true;
                     }
 
@@ -566,7 +566,7 @@ int critterGetBaseStat(Object* critter, Stat stat)
     Proto* proto;
 
     if (stat >= STAT_FIRST && stat < SAVEABLE_STAT_COUNT) {
-        protoGetProto(critter->pid, &proto);
+        protoGetProto(critter, &proto);
         return proto->critter.data.baseStats[stat];
     }
 
@@ -587,7 +587,7 @@ int critterGetBonusStat(Object* critter, Stat stat)
 {
     if (stat >= STAT_FIRST && stat < SAVEABLE_STAT_COUNT) {
         Proto* proto;
-        protoGetProto(critter->pid, &proto);
+        protoGetProto(critter, &proto);
         return proto->critter.data.bonusStats[stat];
     }
 
@@ -621,7 +621,7 @@ int critterSetBaseStat(Object* critter, Stat stat, int value)
             return -3;
         }
 
-        protoGetProto(critter->pid, &proto);
+        protoGetProto(critter, &proto);
         proto->critter.data.baseStats[stat] = value;
 
         if (stat >= STAT_STRENGTH && stat <= STAT_LUCK) {
@@ -677,7 +677,7 @@ int critterSetBonusStat(Object* critter, Stat stat, int value)
 
     if (stat >= STAT_FIRST && stat < SAVEABLE_STAT_COUNT) {
         Proto* proto;
-        protoGetProto(critter->pid, &proto);
+        protoGetProto(critter, &proto);
         proto->critter.data.bonusStats[stat] = value;
 
         if (stat >= STAT_STRENGTH && stat <= STAT_LUCK) {
@@ -720,7 +720,7 @@ void critterUpdateDerivedStats(Object* critter)
     int luck = critterGetStat(critter, STAT_LUCK);
 
     Proto* proto;
-    protoGetProto(critter->pid, &proto);
+    protoGetProto(critter, &proto);
     CritterProtoData* data = &(proto->critter.data);
 
     data->baseStats[STAT_MAXIMUM_HIT_POINTS] = critterGetBaseStatWithTraitModifier(critter, STAT_STRENGTH) + critterGetBaseStatWithTraitModifier(critter, STAT_ENDURANCE) * 2 + 15;
@@ -926,7 +926,7 @@ SkillDexFrmId statGetFrmId(Stat stat)
 // `NULL` if you're not interested in this value.
 //
 // 0x4AFA78
-int statRoll(Object* critter, Stat stat, int modifier, int* howMuch)
+Roll statRoll(Object* critter, Stat stat, int modifier, int* howMuch)
 {
     int value = critterGetStat(critter, stat) + modifier;
     int chance = randomBetween(PRIMARY_STAT_MIN, PRIMARY_STAT_MAX);
@@ -936,10 +936,10 @@ int statRoll(Object* critter, Stat stat, int modifier, int* howMuch)
     }
 
     if (chance <= value) {
-        return ROLL_SUCCESS;
+        return Roll::Success;
     }
 
-    return ROLL_FAILURE;
+    return Roll::Failure;
 }
 
 // 0x4AFAA8

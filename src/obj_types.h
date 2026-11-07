@@ -1,6 +1,7 @@
 #ifndef OBJ_TYPES_H
 #define OBJ_TYPES_H
 
+#include "map_defs.h"
 #include "worldmap.h"
 
 namespace fallout {
@@ -52,12 +53,6 @@ constexpr inline bool rotationIsValid(int rotation)
     return rotation >= ROTATION_FIRST && rotation < ROTATION_COUNT;
 }
 
-inline Rotation rotationFromFid(int fid)
-{
-    int rotation = (fid & 0x70000000) >> 28;
-    return static_cast<Rotation>(rotation);
-}
-
 enum ObjectType : int {
     OBJ_TYPE_INVALID = -1,
     OBJ_TYPE_ITEM,
@@ -87,20 +82,6 @@ constexpr inline bool objectTypeIsValid(int type)
 {
     return type >= OBJ_TYPE_FIRST && type < OBJ_TYPE_COUNT;
 }
-
-constexpr inline ObjectType objectTypeFromFid(int fid)
-{
-    int objectType = (fid & 0xF000000) >> 24;
-    return static_cast<ObjectType>(objectType);
-}
-
-constexpr inline ObjectType objectTypeFromPid(int pid)
-{
-    int objectType = pid >> 24;
-    return static_cast<ObjectType>(objectType);
-}
-
-#define SID_TYPE(value) (value) >> 24
 
 enum OutlineType : int {
     OUTLINE_TYPE_NONE = 0x00,
@@ -317,6 +298,10 @@ enum CritterManeuver : int {
     CRITTER_MANEUVER_ENGAGING = 0x01,
     CRITTER_MANEUVER_DISENGAGING = 0x02,
     CRITTER_MANUEVER_FLEEING = 0x04,
+
+    // SFALL: Set when the critter runs away from a target it can't possibly
+    // hit; its next turn looks for a target again instead of fleeing on.
+    CRITTER_MANEUVER_RETARGET = 0x08,
 };
 
 constexpr inline CritterManeuver operator&(CritterManeuver lhs, CritterManeuver rhs)
@@ -372,6 +357,11 @@ enum Dam : int {
     DAM_CRIP_RANDOM = 0x200000,
     DAM_BACKWASH = 0x400000,
     DAM_PERFORM_REVERSE = 0x800000,
+
+    // SFALL: A critter knocked out in combat woke up outside its turn: it's
+    // still prone until its turn (or the end of combat). Internal, cleared
+    // at its turn and at the end of combat (sfall's value).
+    DAM_KNOCKOUT_WOKEN = 0x40000000,
     DAM_CRIP_LEG_ANY = DAM_CRIP_LEG_LEFT | DAM_CRIP_LEG_RIGHT,
     DAM_CRIP_ARM_ANY = DAM_CRIP_ARM_LEFT | DAM_CRIP_ARM_RIGHT,
     DAM_CRIP = DAM_CRIP_LEG_ANY | DAM_CRIP_ARM_ANY | DAM_BLIND,
@@ -495,7 +485,7 @@ typedef union SceneryObjectData {
 typedef struct MiscObjectData {
     Map map;
     int tile;
-    int elevation;
+    MapElevation elevation;
     Rotation rotation;
 } MiscObjectData;
 
@@ -526,7 +516,7 @@ typedef struct Object {
     Rotation rotation; // obj_cur_rot
     int fid; // obj_fid
     ObjectFlags flags; // obj_flags
-    int elevation; // obj_elev
+    MapElevation elevation; // obj_elev
     ObjectData data;
     int pid; // obj_pid
     int cid; // obj_cid
@@ -554,9 +544,9 @@ static inline int builtTileGetTile(int builtTile)
     return builtTile & BUILT_TILE_TILE_MASK;
 }
 
-static inline int builtTileGetElevation(int builtTile)
+static inline MapElevation builtTileGetElevation(int builtTile)
 {
-    return (builtTile & BUILT_TILE_ELEVATION_MASK) >> BUILT_TILE_ELEVATION_SHIFT;
+    return static_cast<MapElevation>((builtTile & BUILT_TILE_ELEVATION_MASK) >> BUILT_TILE_ELEVATION_SHIFT);
 }
 
 static inline Rotation builtTileGetRotation(int builtTile)
@@ -564,7 +554,7 @@ static inline Rotation builtTileGetRotation(int builtTile)
     return static_cast<Rotation>((builtTile & BUILT_TILE_ROTATION_MASK) >> BUILT_TILE_ROTATION_SHIFT);
 }
 
-static inline int builtTileCreate(int tile, int elevation)
+static inline int builtTileCreate(int tile, MapElevation elevation)
 {
     return tile | ((elevation << BUILT_TILE_ELEVATION_SHIFT) & BUILT_TILE_ELEVATION_MASK);
 }

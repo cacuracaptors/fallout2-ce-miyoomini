@@ -270,9 +270,12 @@ int audioOpen(const char* fname, AudioFileInfo* info, bool* isMemoryBackedPtr)
         audioFile->bitsPerSample = 16;
 
         if (info != nullptr) {
-            // Do not propagate decoder-reported channels by default. Legacy
-            // speech/lips paths rely on the caller's existing mono/stereo
-            // choice unless they explicitly opt into stereo before soundLoad.
+            // Match sfall's SoundFormatChange: 44.1 kHz ACM files use the
+            // decoded channel count. Older mono files can incorrectly declare
+            // stereo, so preserve the caller's channel choice for other rates.
+            if (audioFile->sampleRate == 44100) {
+                info->channels = audioFile->channels;
+            }
             info->sampleRate = audioFile->sampleRate;
             info->bitsPerSample = audioFile->bitsPerSample;
         }
@@ -441,7 +444,7 @@ int audioWrite(int handle, const void* buf, unsigned int size)
 }
 
 // 0x41A7D4
-int audioInit(AudioQueryCompressedFunc* func)
+SoundError audioInit(AudioQueryCompressedFunc* func)
 {
     queryCompressedFunc = func;
     gAudioList = nullptr;

@@ -200,7 +200,7 @@ typedef struct AnimationDescription {
         // - ANIM_KIND_MOVE_TO_TILE_STRAIGHT
         struct {
             int tile;
-            int elevation;
+            MapElevation elevation;
         };
 
         // ANIM_KIND_SET_FID
@@ -330,10 +330,10 @@ static bool canUseDoor(Object* critter, Object* door);
 static int _idist(int a1, int a2, int a3, int a4);
 static int _tile_idistance(int tile1, int tile2);
 static int animateMoveObjectToObject(Object* from, Object* to, int actionPoints, AnimationType anim, int animationSequenceIndex);
-static int animateMoveObjectToTile(Object* obj, int tile, int elev, int actionPoints, AnimationType anim, int animationSequenceIndex);
-static int _anim_move(Object* obj, int tile, int elev, int a3, AnimationType anim, int a5, int animationSequenceIndex);
-static int animateMoveObjectToTileStraight(Object* obj, int tile, int elevation, AnimationType anim, int animationSequenceIndex, int flags);
-static int _anim_move_on_stairs(Object* obj, int tile, int elevation, AnimationType anim, int animationSequenceIndex);
+static int animateMoveObjectToTile(Object* obj, int tile, MapElevation elev, int actionPoints, AnimationType anim, int animationSequenceIndex);
+static int _anim_move(Object* obj, int tile, MapElevation elev, int a3, AnimationType anim, int a5, int animationSequenceIndex);
+static int animateMoveObjectToTileStraight(Object* obj, int tile, MapElevation elevation, AnimationType anim, int animationSequenceIndex, int flags);
+static int _anim_move_on_stairs(Object* obj, int tile, MapElevation elevation, AnimationType anim, int animationSequenceIndex);
 static int _check_for_falling(Object* obj, AnimationType anim, int a3);
 static void _object_move(int index);
 static void _object_straight_move(int index);
@@ -342,7 +342,7 @@ static void _object_anim_compact();
 static int actionRotate(Object* obj, int delta, int animationSequenceIndex);
 static int _anim_hide(Object* object, int animationSequenceIndex);
 static int animationChangeFrmId(Object* obj, int animationSequenceIndex, const FrmId& frmId);
-static int _check_gravity(int tile, int elevation);
+static int _check_gravity(int tile, MapElevation elevation);
 static unsigned int animationComputeTicksPerFrame(Object* object, const FrmId& frmId);
 
 static void reportOverloaded(Object* critter);
@@ -692,7 +692,7 @@ int animationRegisterMoveToObject(Object* owner, Object* destination, int action
     animationDescription->actionPoints = actionPoints;
     animationDescription->delay = delay;
 
-    const FrmId frmId = FrmId(owner, animationDescription->anim, weaponAnimationFromFid(owner->fid), owner->rotation + 1);
+    const FrmId frmId = FrmId(owner, animationDescription->anim, owner->rotation + 1);
 
     // NOTE: Uninline.
     if (_anim_preload(owner, frmId, &(animationDescription->artCacheKey)) == -1) {
@@ -730,9 +730,9 @@ int animationRegisterRunToObject(Object* owner, Object* destination, int actionP
     animationDescription->owner = owner;
     animationDescription->destination = destination;
 
-    if ((objectTypeFromFid(owner->fid) == OBJ_TYPE_CRITTER && (owner->data.critter.combat.results & DAM_CRIP_LEG_ANY) != DAM_NONE)
+    if ((FrmId(owner).objectType() == OBJ_TYPE_CRITTER && (owner->data.critter.combat.results & DAM_CRIP_LEG_ANY) != DAM_NONE)
         || (owner == gDude && dudeHasState(DUDE_STATE_SNEAKING) && !perkGetRank(gDude, PERK_SILENT_RUNNING))
-        || !FrmId(owner, ANIM_RUNNING, WEAPON_ANIMATION_NONE, owner->rotation + 1).exist()) {
+        || !FrmId(owner, ANIM_RUNNING, WeaponAnimation::None, owner->rotation + 1).exist()) {
         animationDescription->anim = ANIM_WALK;
     } else {
         animationDescription->anim = ANIM_RUNNING;
@@ -741,7 +741,7 @@ int animationRegisterRunToObject(Object* owner, Object* destination, int actionP
     animationDescription->actionPoints = actionPoints;
     animationDescription->delay = delay;
 
-    const FrmId frmId = FrmId(owner, animationDescription->anim, weaponAnimationFromFid(owner->fid), owner->rotation + 1);
+    const FrmId frmId = FrmId(owner, animationDescription->anim, owner->rotation + 1);
 
     // NOTE: Uninline.
     if (_anim_preload(owner, frmId, &(animationDescription->artCacheKey)) == -1) {
@@ -754,7 +754,7 @@ int animationRegisterRunToObject(Object* owner, Object* destination, int actionP
 }
 
 // 0x414294
-int animationRegisterMoveToTile(Object* owner, int tile, int elevation, int actionPoints, int delay)
+int animationRegisterMoveToTile(Object* owner, int tile, MapElevation elevation, int actionPoints, int delay)
 {
     if (_check_registry(owner) == -1 || actionPoints == 0) {
         _anim_cleanup();
@@ -774,7 +774,7 @@ int animationRegisterMoveToTile(Object* owner, int tile, int elevation, int acti
     animationDescription->actionPoints = actionPoints;
     animationDescription->delay = delay;
 
-    const FrmId frmId = FrmId(owner, animationDescription->anim, weaponAnimationFromFid(owner->fid), owner->rotation + 1);
+    const FrmId frmId = FrmId(owner, animationDescription->anim, owner->rotation + 1);
 
     // NOTE: Uninline.
     if (_anim_preload(owner, frmId, &(animationDescription->artCacheKey)) == -1) {
@@ -788,7 +788,7 @@ int animationRegisterMoveToTile(Object* owner, int tile, int elevation, int acti
 }
 
 // 0x414394
-int animationRegisterRunToTile(Object* owner, int tile, int elevation, int actionPoints, int delay)
+int animationRegisterRunToTile(Object* owner, int tile, MapElevation elevation, int actionPoints, int delay)
 {
     if (_check_registry(owner) == -1 || actionPoints == 0) {
         _anim_cleanup();
@@ -813,9 +813,9 @@ int animationRegisterRunToTile(Object* owner, int tile, int elevation, int actio
     animationDescription->tile = tile;
     animationDescription->elevation = elevation;
 
-    if ((objectTypeFromFid(owner->fid) == OBJ_TYPE_CRITTER && (owner->data.critter.combat.results & DAM_CRIP_LEG_ANY) != DAM_NONE)
+    if ((FrmId(owner).objectType() == OBJ_TYPE_CRITTER && (owner->data.critter.combat.results & DAM_CRIP_LEG_ANY) != DAM_NONE)
         || (owner == gDude && dudeHasState(DUDE_STATE_SNEAKING) && !perkGetRank(gDude, PERK_SILENT_RUNNING))
-        || !FrmId(owner, ANIM_RUNNING, WEAPON_ANIMATION_NONE, owner->rotation + 1).exist()) {
+        || !FrmId(owner, ANIM_RUNNING, WeaponAnimation::None, owner->rotation + 1).exist()) {
         animationDescription->anim = ANIM_WALK;
     } else {
         animationDescription->anim = ANIM_RUNNING;
@@ -824,7 +824,7 @@ int animationRegisterRunToTile(Object* owner, int tile, int elevation, int actio
     animationDescription->actionPoints = actionPoints;
     animationDescription->delay = delay;
 
-    const FrmId frmId = FrmId(owner, animationDescription->anim, weaponAnimationFromFid(owner->fid), owner->rotation + 1);
+    const FrmId frmId = FrmId(owner, animationDescription->anim, owner->rotation + 1);
 
     // NOTE: Uninline.
     if (_anim_preload(owner, frmId, &(animationDescription->artCacheKey)) == -1) {
@@ -838,7 +838,7 @@ int animationRegisterRunToTile(Object* owner, int tile, int elevation, int actio
 }
 
 // 0x4145D0
-int animationRegisterMoveToTileStraight(Object* object, int tile, int elevation, AnimationType anim, int delay)
+int animationRegisterMoveToTileStraight(Object* object, int tile, MapElevation elevation, AnimationType anim, int delay)
 {
     if (_check_registry(object) == -1) {
         _anim_cleanup();
@@ -859,7 +859,7 @@ int animationRegisterMoveToTileStraight(Object* object, int tile, int elevation,
     animationDescription->anim = anim;
     animationDescription->delay = delay;
 
-    const FrmId frmId = FrmId(object, animationDescription->anim, weaponAnimationFromFid(object->fid), object->rotation + 1);
+    const FrmId frmId = FrmId(object, animationDescription->anim, object->rotation + 1);
 
     // NOTE: Uninline.
     if (_anim_preload(object, frmId, &(animationDescription->artCacheKey)) == -1) {
@@ -873,7 +873,7 @@ int animationRegisterMoveToTileStraight(Object* object, int tile, int elevation,
 }
 
 // 0x4146C4
-int animationRegisterMoveToTileStraightAndWaitForComplete(Object* owner, int tile, int elevation, AnimationType anim, int delay)
+int animationRegisterMoveToTileStraightAndWaitForComplete(Object* owner, int tile, MapElevation elevation, AnimationType anim, int delay)
 {
     if (_check_registry(owner) == -1) {
         _anim_cleanup();
@@ -893,7 +893,7 @@ int animationRegisterMoveToTileStraightAndWaitForComplete(Object* owner, int til
     animationDescription->anim = anim;
     animationDescription->delay = delay;
 
-    const FrmId frmId = FrmId(owner, animationDescription->anim, weaponAnimationFromFid(owner->fid), owner->rotation + 1);
+    const FrmId frmId = FrmId(owner, animationDescription->anim, owner->rotation + 1);
 
     // NOTE: Uninline.
     if (_anim_preload(owner, frmId, &(animationDescription->artCacheKey)) == -1) {
@@ -921,7 +921,7 @@ int animationRegisterAnimate(Object* owner, AnimationType anim, int delay)
     animationDescription->anim = anim;
     animationDescription->delay = delay;
 
-    const FrmId frmId = FrmId(owner, animationDescription->anim, weaponAnimationFromFid(owner->fid), owner->rotation + 1);
+    const FrmId frmId = FrmId(owner, animationDescription->anim, owner->rotation + 1);
 
     // NOTE: Uninline.
     if (_anim_preload(owner, frmId, &(animationDescription->artCacheKey)) == -1) {
@@ -950,7 +950,7 @@ int animationRegisterAnimateReversed(Object* owner, AnimationType anim, int dela
     animationDescription->delay = delay;
     animationDescription->artCacheKey = nullptr;
 
-    const FrmId frmId = FrmId(owner, animationDescription->anim, weaponAnimationFromFid(owner->fid), owner->rotation + 1);
+    const FrmId frmId = FrmId(owner, animationDescription->anim, owner->rotation + 1);
 
     // NOTE: Uninline.
     if (_anim_preload(owner, frmId, &(animationDescription->artCacheKey)) == -1) {
@@ -979,7 +979,7 @@ int animationRegisterAnimateAndHide(Object* owner, AnimationType anim, int delay
     animationDescription->delay = delay;
     animationDescription->artCacheKey = nullptr;
 
-    const FrmId frmId = FrmId(owner, anim, weaponAnimationFromFid(owner->fid), owner->rotation + 1);
+    const FrmId frmId = FrmId(owner, anim, owner->rotation + 1);
 
     // NOTE: Uninline.
     if (_anim_preload(owner, frmId, &(animationDescription->artCacheKey)) == -1) {
@@ -1249,7 +1249,10 @@ int animationRegisterSetFrmId(Object* owner, const FrmId& frmId, int delay)
 // 0x415238
 int animationRegisterTakeOutWeapon(Object* owner, WeaponAnimation weaponAnimationCode, int delay)
 {
-    const char* sfx = sfxBuildCharName(owner, ANIM_TAKE_OUT, weaponAnimationCode);
+    // weapon animation and character sound effect is being mishmashed together within code
+    CharacterSoundEffect soundEffect = weaponAnimationIsValid(weaponAnimationCode) ? static_cast<CharacterSoundEffect>(weaponAnimationCode) : CharacterSoundEffect::Unused;
+
+    const char* sfx = sfxBuildCharName(owner, ANIM_TAKE_OUT, soundEffect);
     if (animationRegisterPlaySoundEffect(owner, sfx, delay) == -1) {
         return -1;
     }
@@ -1265,7 +1268,7 @@ int animationRegisterTakeOutWeapon(Object* owner, WeaponAnimation weaponAnimatio
     animationDescription->anim = ANIM_TAKE_OUT;
     animationDescription->delay = 0; // TODO: should use `delay`?
     animationDescription->owner = owner;
-    animationDescription->weaponAnimationCode = weaponAnimationCode;
+    animationDescription->weaponAnimationCode = static_cast<int>(weaponAnimationCode);
 
     const FrmId frmId = FrmId(owner, ANIM_TAKE_OUT, weaponAnimationCode, owner->rotation + 1);
 
@@ -1371,7 +1374,7 @@ int animationRegisterAnimateForever(Object* owner, AnimationType anim, int delay
     animationDescription->anim = anim;
     animationDescription->delay = delay;
 
-    const FrmId frmId = FrmId(owner, anim, weaponAnimationFromFid(owner->fid), owner->rotation + 1);
+    const FrmId frmId = FrmId(owner, anim, owner->rotation + 1);
 
     // NOTE: Uninline.
     if (_anim_preload(owner, frmId, &(animationDescription->artCacheKey)) == -1) {
@@ -1663,7 +1666,7 @@ static int _anim_set_end(int animationSequenceIndex)
             destroyedOwners[destroyedOwnersLength++] = owner;
 
             Rect rect;
-            int elevation = owner->elevation;
+            MapElevation elevation = owner->elevation;
             objectDestroy(owner, &rect);
             tileWindowRefreshRect(&rect, elevation);
         }
@@ -1684,7 +1687,7 @@ static int _anim_set_end(int animationSequenceIndex)
                     continue;
                 }
 
-                if (objectTypeFromFid(owner->fid) == OBJ_TYPE_CRITTER) {
+                if (FrmId(owner).objectType() == OBJ_TYPE_CRITTER) {
                     int j = 0;
                     for (; j < i; j++) {
                         AnimationDescription* ad = &(animationSequence->animations[j]);
@@ -1754,11 +1757,11 @@ static bool canUseDoor(Object* critter, Object* door)
         }
     }
 
-    if (objectTypeFromFid(critter->fid) != OBJ_TYPE_CRITTER) {
+    if (FrmId(critter).objectType() != OBJ_TYPE_CRITTER) {
         return false;
     }
 
-    if (objectTypeFromFid(door->fid) != OBJ_TYPE_SCENERY) {
+    if (FrmId(door).objectType() != OBJ_TYPE_SCENERY) {
         return false;
     }
 
@@ -1768,7 +1771,7 @@ static bool canUseDoor(Object* critter, Object* door)
     }
 
     Proto* proto;
-    if (protoGetProto(door->pid, &proto) == -1) {
+    if (protoGetProto(door, &proto) == -1) {
         return false;
     }
 
@@ -1807,7 +1810,7 @@ int pathfinderFindPath(Object* object, int from, int to, unsigned char* rotation
 
     bool isCritter = false;
     int critterType = 0;
-    if (objectTypeFromPid(object->pid) == OBJ_TYPE_CRITTER) {
+    if (ProtoId(object).objectType() == OBJ_TYPE_CRITTER) {
         isCritter = true;
         critterType = critterGetKillType(object);
     }
@@ -1835,6 +1838,13 @@ int pathfinderFindPath(Object* object, int from, int to, unsigned char* rotation
     int closedPathNodeListLength = 0;
     int openPathNodeListLength = 1;
     PathNode temp;
+
+    constexpr std::array<ProtoId, 4> kRadioactiveGooProtoIds = {
+        SceneryProtoTypeId::FirstRadioactiveGoo,
+        SceneryProtoTypeId::SecondRadioactiveGoo,
+        SceneryProtoTypeId::ThirdRadioactiveGoo,
+        SceneryProtoTypeId::LastRadioactiveGoo,
+    };
 
     while (1) {
         int v63 = -1;
@@ -1941,7 +1951,7 @@ int pathfinderFindPath(Object* object, int from, int to, unsigned char* rotation
             if (isCritter) {
                 Object* o = objectFindFirstAtLocation(object->elevation, v27->tile);
                 while (o != nullptr) {
-                    if (o->pid >= FIRST_RADIOACTIVE_GOO_PID && o->pid <= LAST_RADIOACTIVE_GOO_PID) {
+                    if (std::find(kRadioactiveGooProtoIds.begin(), kRadioactiveGooProtoIds.end(), ProtoId(o)) != kRadioactiveGooProtoIds.end()) {
                         break;
                     }
                     o = objectFindNextAtLocation();
@@ -2281,9 +2291,9 @@ static int animateMoveObjectToObject(Object* from, Object* to, int actionPoints,
 }
 
 // 0x41695C
-int _make_stair_path(Object* object, int from, int fromElevation, int to, int toElevation, StraightPathNode* a6, Object** obstaclePtr)
+int _make_stair_path(Object* object, int from, MapElevation fromElevation, int to, MapElevation toElevation, StraightPathNode* a6, Object** obstaclePtr)
 {
-    int elevation = fromElevation;
+    MapElevation elevation = fromElevation;
     if (elevation > toElevation) {
         elevation = toElevation;
     }
@@ -2460,7 +2470,7 @@ int _make_stair_path(Object* object, int from, int fromElevation, int to, int to
 }
 
 // 0x416CFC
-static int animateMoveObjectToTile(Object* obj, int tile, int elev, int actionPoints, AnimationType anim, int animationSequenceIndex)
+static int animateMoveObjectToTile(Object* obj, int tile, MapElevation elev, int actionPoints, AnimationType anim, int animationSequenceIndex)
 {
     int index = _anim_move(obj, tile, elev, -1, anim, 0, animationSequenceIndex);
     if (index == -1) {
@@ -2479,13 +2489,21 @@ static int animateMoveObjectToTile(Object* obj, int tile, int elev, int actionPo
         if (actionPoints != -1 && actionPoints < sad->length) {
             sad->length = actionPoints;
         }
+    } else if (obj == gDude && actionPoints >= 0 && actionPoints - _combat_free_move < obj->data.critter.combat.ap) {
+        // SFALL: Fix for anim_move_to_tile_ engine function ignoring the
+        // distance argument for the player: a walk to a free tile shorter
+        // than the player's move points stops at the distance too.
+        AnimationSad* sad = &(gAnimationSads[index]);
+        if (actionPoints < sad->length) {
+            sad->length = actionPoints;
+        }
     }
 
     return 0;
 }
 
 // 0x416DFC
-static int _anim_move(Object* obj, int tile, int elev, int a3, AnimationType anim, int a5, int animationSequenceIndex)
+static int _anim_move(Object* obj, int tile, MapElevation elev, int a3, AnimationType anim, int a5, int animationSequenceIndex)
 {
     if (gAnimationCurrentSad == ANIMATION_SAD_LIST_CAPACITY) {
         return -1;
@@ -2501,7 +2519,7 @@ static int _anim_move(Object* obj, int tile, int elev, int a3, AnimationType ani
     }
 
     sad->step = SAD_INIT;
-    sad->fid = FrmId(obj, anim, weaponAnimationFromFid(obj->fid), obj->rotation + 1).fid();
+    sad->fid = FrmId(obj, anim, obj->rotation + 1).fid();
     sad->animationTimestamp = 0;
     sad->ticksPerFrame = animationComputeTicksPerFrame(obj, FrmId(sad->fid));
     sad->targetTile = tile;
@@ -2524,7 +2542,7 @@ static int _anim_move(Object* obj, int tile, int elev, int a3, AnimationType ani
 }
 
 // 0x416F54
-static int animateMoveObjectToTileStraight(Object* obj, int tile, int elevation, AnimationType anim, int animationSequenceIndex, int flags)
+static int animateMoveObjectToTileStraight(Object* obj, int tile, MapElevation elevation, AnimationType anim, int animationSequenceIndex, int flags)
 {
     if (gAnimationCurrentSad == ANIMATION_SAD_LIST_CAPACITY) {
         return -1;
@@ -2537,7 +2555,7 @@ static int animateMoveObjectToTileStraight(Object* obj, int tile, int elevation,
         sad->fid = obj->fid;
         sad->flags |= ANIM_SAD_NO_ANIM;
     } else {
-        sad->fid = FrmId(obj, anim, weaponAnimationFromFid(obj->fid), obj->rotation + 1).fid();
+        sad->fid = FrmId(obj, anim, obj->rotation + 1).fid();
     }
     sad->step = SAD_INIT;
     sad->animationTimestamp = 0;
@@ -2545,8 +2563,9 @@ static int animateMoveObjectToTileStraight(Object* obj, int tile, int elevation,
     sad->animationSequenceIndex = animationSequenceIndex;
 
     int v15;
-    if (objectTypeFromFid(obj->fid) == OBJ_TYPE_CRITTER) {
-        if (animationTypeFromFid(obj->fid) == ANIM_JUMP_BEGIN)
+    const FrmId frmId = FrmId(obj);
+    if (frmId.objectType() == OBJ_TYPE_CRITTER) {
+        if (frmId.animationType() == ANIM_JUMP_BEGIN)
             v15 = 16;
         else
             v15 = 4;
@@ -2566,7 +2585,7 @@ static int animateMoveObjectToTileStraight(Object* obj, int tile, int elevation,
 }
 
 // 0x41712C
-static int _anim_move_on_stairs(Object* obj, int tile, int elevation, AnimationType anim, int animationSequenceIndex)
+static int _anim_move_on_stairs(Object* obj, int tile, MapElevation elevation, AnimationType anim, int animationSequenceIndex)
 {
     if (gAnimationCurrentSad == ANIMATION_SAD_LIST_CAPACITY) {
         return -1;
@@ -2579,7 +2598,7 @@ static int _anim_move_on_stairs(Object* obj, int tile, int elevation, AnimationT
         sad->fid = obj->fid;
         sad->flags |= ANIM_SAD_NO_ANIM;
     } else {
-        sad->fid = FrmId(obj, anim, weaponAnimationFromFid(obj->fid), obj->rotation + 1).fid();
+        sad->fid = FrmId(obj, anim, obj->rotation + 1).fid();
     }
     sad->step = SAD_INIT;
     sad->animationTimestamp = 0;
@@ -2614,7 +2633,7 @@ static int _check_for_falling(Object* obj, AnimationType anim, int a3)
         sad->fid = obj->fid;
         sad->flags |= ANIM_SAD_NO_ANIM;
     } else {
-        sad->fid = FrmId(obj, anim, weaponAnimationFromFid(obj->fid), obj->rotation + 1).fid();
+        sad->fid = FrmId(obj, anim, obj->rotation + 1).fid();
     }
     sad->step = SAD_INIT;
     sad->animationTimestamp = 0;
@@ -2649,7 +2668,7 @@ static void _object_move(int index)
         objectSetRotation(object, static_cast<Rotation>(sad->rotations[0]), &tempRect);
         rectUnion(&dirtyRect, &tempRect, &dirtyRect);
 
-        const FrmId fid = FrmId(object, sad->anim, weaponAnimationFromFid(object->fid), object->rotation + 1);
+        const FrmId fid = FrmId(object, sad->anim, object->rotation + 1);
         objectSetFrmId(object, fid, &tempRect);
         rectUnion(&dirtyRect, &tempRect, &dirtyRect);
 
@@ -2662,7 +2681,7 @@ static void _object_move(int index)
     int frameY;
 
     CacheEntry* cacheHandle;
-    Art* art = artLock(FrmId(object->fid), &cacheHandle);
+    Art* art = artLock(FrmId(object), &cacheHandle);
     if (art != nullptr) {
         artGetFrameOffsets(art, object->frame, object->rotation, &frameX, &frameY);
         artUnlock(cacheHandle);
@@ -2716,7 +2735,7 @@ static void _object_move(int index)
             rectUnion(&dirtyRect, &tempRect, &dirtyRect);
 
             bool cannotMove = false;
-            if (isInCombat() && objectTypeFromFid(object->fid) == OBJ_TYPE_CRITTER) {
+            if (isInCombat() && FrmId(object).objectType() == OBJ_TYPE_CRITTER) {
                 int actionPointsRequired = critterGetMovementPointCostAdjustedForCrippledLegs(object, 1);
                 if (actionPointsRequired > _combat_free_move) {
                     actionPointsRequired -= _combat_free_move;
@@ -2774,7 +2793,7 @@ static void _object_straight_move(int index)
     }
 
     CacheEntry* cacheHandle;
-    Art* art = artLock(FrmId(object->fid), &cacheHandle);
+    Art* art = artLock(FrmId(object), &cacheHandle);
     if (art != nullptr) {
         int lastFrame = artGetFrameCount(art) - 1;
         artUnlock(cacheHandle);
@@ -2827,7 +2846,7 @@ static int _anim_animate(Object* obj, AnimationType anim, int animationSequenceI
         frmId = FrmId(obj, ANIM_TAKE_OUT, static_cast<WeaponAnimation>(flags), obj->rotation + 1);
     } else {
         sad->flags = flags;
-        frmId = FrmId(obj, anim, weaponAnimationFromFid(obj->fid), obj->rotation + 1);
+        frmId = FrmId(obj, anim, obj->rotation + 1);
     }
 
     if (!frmId.exist()) {
@@ -2907,7 +2926,7 @@ void _object_animate()
         if (object->fid == sad->fid) {
             if ((sad->flags & ANIM_SAD_REVERSE) == 0) {
                 CacheEntry* cacheHandle;
-                Art* art = artLock(FrmId(object->fid), &cacheHandle);
+                Art* art = artLock(FrmId(object), &cacheHandle);
                 if (art != nullptr) {
                     if ((sad->flags & ANIM_SAD_FOREVER) == 0 && object->frame == artGetFrameCount(art) - 1) {
                         sad->step = ANIM_COMPLETE;
@@ -2945,7 +2964,7 @@ void _object_animate()
                 int y = 0;
 
                 CacheEntry* cacheHandle;
-                Art* art = artLock(FrmId(object->fid), &cacheHandle);
+                Art* art = artLock(FrmId(object), &cacheHandle);
                 if (art != nullptr) {
                     artGetFrameOffsets(art, object->frame, object->rotation, &x, &y);
                     artUnlock(cacheHandle);
@@ -2968,7 +2987,7 @@ void _object_animate()
             int y;
 
             CacheEntry* cacheHandle;
-            Art* art = artLock(FrmId(object->fid), &cacheHandle);
+            Art* art = artLock(FrmId(object), &cacheHandle);
             if (art != nullptr) {
                 artGetRotationOffsets(art, object->rotation, &x, &y);
                 artUnlock(cacheHandle);
@@ -2980,7 +2999,7 @@ void _object_animate()
             objectSetFrmId(object, FrmId(sad->fid), &tempRect);
             rectUnion(&dirtyRect, &tempRect, &dirtyRect);
 
-            art = artLock(FrmId(object->fid), &cacheHandle);
+            art = artLock(FrmId(object), &cacheHandle);
             if (art != nullptr) {
                 int frame;
                 if ((sad->flags & ANIM_SAD_REVERSE) != 0) {
@@ -3049,6 +3068,107 @@ static void _object_anim_compact()
     gAnimationCurrentSad = index;
 }
 
+// Returns the AP a combat move keeps for an attack with the current weapon
+// mode while Ctrl is held, or -1 when Ctrl is up or no attack is selected.
+int dudeMoveGetReservedActionPoints()
+{
+    if (!gPressedPhysicalKeys[SDL_SCANCODE_RCTRL] && !gPressedPhysicalKeys[SDL_SCANCODE_LCTRL]) {
+        return -1;
+    }
+
+    HitMode hitMode;
+    bool aiming;
+    if (interfaceGetCurrentHitMode(&hitMode, &aiming) != 0) {
+        return -1;
+    }
+
+    return itemGetActionPointCost(gDude, hitMode, aiming);
+}
+
+// Returns how many hexes a Ctrl move can walk on `actionPoints` (AP plus free
+// move) and still keep the attack cost, or -1 when Ctrl is up. Returns 0 when
+// the dude cannot keep the attack cost at all. Free move only pays for walking,
+// so the attack has to fit in the dude's own AP.
+int dudeMoveGetReservedStepLimit(int actionPoints)
+{
+    int reservedActionPoints = dudeMoveGetReservedActionPoints();
+    if (reservedActionPoints == -1) {
+        return -1;
+    }
+
+    if (gDude->data.critter.combat.ap < reservedActionPoints) {
+        return 0;
+    }
+
+    int moveActionPoints = actionPoints - reservedActionPoints;
+    if (moveActionPoints <= 0) {
+        return 0;
+    }
+
+    int stepCost = critterGetMovementPointCostAdjustedForCrippledLegs(gDude, 1);
+    return stepCost > 0 ? moveActionPoints / stepCost : moveActionPoints;
+}
+
+// Returns the tile where a combat move from the dude toward `tile` stops, or
+// -1 when the move does not start. `actionPoints` is AP plus free move, as
+// _check_move gets it. Stores the hexes walked in `stepsPtr` and the AP (not
+// free move) the walk spends in `actionPointsSpentPtr`; either can be null.
+// The rules follow the move itself:
+// - A Ctrl move ends after dudeMoveGetReservedStepLimit steps.
+// - Otherwise the walk stops once AP and free move reach 0. Each step costs its
+//   full price, free move first, so the last step can cost more than what
+//   remains.
+// - A move onto an occupied hex stops on the hex before it, and
+//   animateMoveObjectToTile caps it at one hex per point of `actionPoints`.
+int dudeMoveGetLandingTile(int tile, int actionPoints, int* stepsPtr, int* actionPointsSpentPtr)
+{
+    if (actionPoints <= 0) {
+        return -1;
+    }
+
+    unsigned char rotations[800];
+    int pathLength = _make_path(gDude, gDude->tile, tile, rotations, 0);
+    bool blocked = _obj_blocking_at(gDude, tile, gDude->elevation) != nullptr;
+    int steps = blocked ? pathLength - 1 : pathLength;
+    if (steps <= 0) {
+        return -1;
+    }
+
+    int stepCost = critterGetMovementPointCostAdjustedForCrippledLegs(gDude, 1);
+    int stepLimit = dudeMoveGetReservedStepLimit(actionPoints);
+    if (stepLimit == -1) {
+        if (stepCost > 0) {
+            steps = std::min(steps, (actionPoints + stepCost - 1) / stepCost);
+        }
+
+        if (blocked) {
+            steps = std::min(steps, actionPoints);
+        }
+    } else {
+        if (stepLimit == 0) {
+            return -1;
+        }
+
+        steps = std::min(steps, stepLimit);
+    }
+
+    if (stepsPtr != nullptr) {
+        *stepsPtr = steps;
+    }
+
+    if (actionPointsSpentPtr != nullptr) {
+        int actionPointsSpent = std::max(0, steps * std::max(0, stepCost) - _combat_free_move);
+        *actionPointsSpentPtr = std::min(gDude->data.critter.combat.ap, actionPointsSpent);
+    }
+
+    int landingTile = gDude->tile;
+    for (int index = 0; index < steps; index++) {
+        landingTile = tileGetTileInDirection(landingTile, static_cast<Rotation>(rotations[index]), 1);
+    }
+
+    return landingTile;
+}
+
 // 0x417FFC
 int _check_move(int* actionPointsPtr)
 {
@@ -3063,15 +3183,21 @@ int _check_move(int* actionPointsPtr)
 
     if (isInCombat()) {
         if (*actionPointsPtr != -1) {
-            if (gPressedPhysicalKeys[SDL_SCANCODE_RCTRL] || gPressedPhysicalKeys[SDL_SCANCODE_LCTRL]) {
-                HitMode hitMode;
-                bool aiming;
-                interfaceGetCurrentHitMode(&hitMode, &aiming);
-
-                *actionPointsPtr -= itemGetActionPointCost(gDude, hitMode, aiming);
-                if (*actionPointsPtr <= 0) {
+            if (dudeMoveGetReservedActionPoints() != -1) {
+                // The walk itself only stops when AP runs out, so end the
+                // path early to keep the attack cost.
+                int steps;
+                tile = dudeMoveGetLandingTile(tile, *actionPointsPtr, &steps, nullptr);
+                if (tile == -1) {
                     return -1;
                 }
+
+                // Callers expect AP back, but this hands back hexes. Both
+                // callers only pass the value on to animateMoveObjectToTile,
+                // which uses it to cap `sad->length`, a hex count. A step can
+                // cost more than 1 AP (crippled legs), so `steps` is the
+                // number that cap needs.
+                *actionPointsPtr = steps;
             }
         }
     } else {
@@ -3089,13 +3215,16 @@ int _dude_move(int actionPoints)
     // 0x51072C
     static int lastDestination = -2;
 
+    int availableActionPoints = actionPoints;
     int tile = _check_move(&actionPoints);
     if (tile == -1) {
         return -1;
     }
 
+    // _dude_run checks the move again, so hand it the AP from before the
+    // Ctrl reserve to keep the reserve from being taken twice.
     if (lastDestination == tile) {
-        return _dude_run(actionPoints);
+        return _dude_run(availableActionPoints);
     }
 
     lastDestination = tile;
@@ -3115,7 +3244,7 @@ int _dude_run(int actionPoints)
         return -1;
     }
 
-    if (!perkGetRank(gDude, PERK_SILENT_RUNNING)) {
+    if (!settings.qol.walk_when_sneaking && !perkGetRank(gDude, PERK_SILENT_RUNNING)) {
         dudeDisableState(DUDE_STATE_SNEAKING);
     }
 
@@ -3168,12 +3297,13 @@ void _dude_fidget()
             break;
         }
 
-        if ((object->flags & OBJECT_HIDDEN) == OBJECT_NONE && objectTypeFromFid(object->fid) == OBJ_TYPE_CRITTER && animationTypeFromFid(object->fid) == ANIM_STAND && !critterIsDead(object)) {
+        const FrmId frmId = FrmId(object);
+        if ((object->flags & OBJECT_HIDDEN) == OBJECT_NONE && frmId.objectType() == OBJ_TYPE_CRITTER && frmId.animationType() == ANIM_STAND && !critterIsDead(object)) {
             Rect rect;
             objectGetRect(object, &rect);
 
             Rect intersection;
-            if (rectIntersection(&rect, &_scr_size, &intersection) == 0 && (gMapHeader.index != MAP_SPECIAL_RND_WOODSMAN || object->pid != 0x10000FA)) {
+            if (rectIntersection(&rect, &_scr_size, &intersection) == 0 && (gMapHeader.index != MAP_SPECIAL_RND_WOODSMAN || ProtoId(object) != CritterProtoTypeId::EnclavePatrolMale)) {
                 candidates[candidatesLength++] = object;
             }
         }
@@ -3194,7 +3324,7 @@ void _dude_fidget()
         } else {
             char fileName[16];
             fileName[0] = '\0';
-            artCopyFileName(FrmId(object->fid), fileName);
+            artCopyFileName(FrmId(object), fileName);
             if (fileName[0] == 'm' || fileName[0] == 'M') {
                 if (objectGetDistanceBetween(object, gDude) < critterGetStat(gDude, STAT_PERCEPTION) * 2) {
                     shoudPlaySound = true;
@@ -3203,7 +3333,7 @@ void _dude_fidget()
         }
 
         if (shoudPlaySound) {
-            const char* sfx = sfxBuildCharName(object, ANIM_STAND, CHARACTER_SOUND_EFFECT_UNUSED);
+            const char* sfx = sfxBuildCharName(object, ANIM_STAND, CharacterSoundEffect::Unused);
             animationRegisterPlaySoundEffect(object, sfx, 0);
         }
 
@@ -3234,8 +3364,8 @@ void _dude_stand(Object* obj, Rotation rotation, const FrmId& frmId)
     int x = 0;
     int y = 0;
 
-    WeaponAnimation weaponAnimationCode = weaponAnimationFromFid(obj->fid);
-    if (weaponAnimationCode != WEAPON_ANIMATION_NONE) {
+    WeaponAnimation weaponAnimationCode = FrmId(obj).weaponAnimation();
+    if (weaponAnimationCode != WeaponAnimation::None) {
         if (!frmId.valid()) {
             FrmId takeOutFrmId = FrmId(obj, ANIM_TAKE_OUT, weaponAnimationCode, obj->rotation + 1);
             CacheEntry* takeOutFrmHandle;
@@ -3252,7 +3382,7 @@ void _dude_stand(Object* obj, Rotation rotation, const FrmId& frmId)
                 artUnlock(takeOutFrmHandle);
 
                 CacheEntry* standFrmHandle;
-                FrmId standFid = FrmId(obj, ANIM_STAND, WEAPON_ANIMATION_NONE, obj->rotation + 1);
+                FrmId standFid = FrmId(obj, ANIM_STAND, WeaponAnimation::None, obj->rotation + 1);
                 Art* standFrm = artLock(standFid, &standFrmHandle);
                 if (standFrm != nullptr) {
                     int offsetX;
@@ -3270,12 +3400,12 @@ void _dude_stand(Object* obj, Rotation rotation, const FrmId& frmId)
     FrmId finalFrmId = frmId;
     if (!finalFrmId.valid()) {
         AnimationType anim;
-        if (animationTypeFromFid(obj->fid) == ANIM_FIRE_DANCE) {
+        if (FrmId(obj).animationType() == ANIM_FIRE_DANCE) {
             anim = ANIM_FIRE_DANCE;
         } else {
             anim = ANIM_STAND;
         }
-        finalFrmId = FrmId(obj, anim, weaponAnimationFromFid(obj->fid), obj->rotation + 1);
+        finalFrmId = FrmId(obj, anim, obj->rotation + 1);
     }
 
     Rect temp;
@@ -3297,17 +3427,23 @@ void _dude_stand(Object* obj, Rotation rotation, const FrmId& frmId)
 // 0x418574
 void _dude_standup(Object* a1)
 {
-    reg_anim_begin(ANIMATION_REQUEST_RESERVED);
+    // SFALL: Fixes for knockout/down issues: the stand up animation only if
+    // the critter is actually in the prone position.
+    AnimationType currentAnim = FrmId(a1).animationType();
+    if (currentAnim == ANIM_FALL_BACK || currentAnim == ANIM_FALL_FRONT) {
+        reg_anim_begin(ANIMATION_REQUEST_RESERVED);
 
-    AnimationType anim;
-    if (animationTypeFromFid(a1->fid) == ANIM_FALL_BACK) {
-        anim = ANIM_BACK_TO_STANDING;
-    } else {
-        anim = ANIM_PRONE_TO_STANDING;
+        AnimationType anim;
+        if (currentAnim == ANIM_FALL_BACK) {
+            anim = ANIM_BACK_TO_STANDING;
+        } else {
+            anim = ANIM_PRONE_TO_STANDING;
+        }
+
+        animationRegisterAnimate(a1, anim, 0);
+        reg_anim_end();
     }
 
-    animationRegisterAnimate(a1, anim, 0);
-    reg_anim_end();
     a1->data.critter.combat.results &= ~DAM_KNOCKED_DOWN;
 }
 
@@ -3351,7 +3487,7 @@ static int _anim_hide(Object* object, int animationSequenceIndex)
 // 0x418660
 static int animationChangeFrmId(Object* obj, int animationSequenceIndex, const FrmId& frmId)
 {
-    if (animationTypeFromFid(frmId.fid())) {
+    if (frmId.animationType()) {
         Rect dirtyRect;
         Rect tempRect;
 
@@ -3383,16 +3519,16 @@ void animationStop()
 }
 
 // 0x418708
-static int _check_gravity(int tile, int elevation)
+static int _check_gravity(int tile, MapElevation elevation)
 {
-    for (; elevation > 0; elevation--) {
+    for (; elevation > ELEVATION_FIRST; elevation--) {
         int x;
         int y;
         tileToScreenXY(tile, &x, &y);
 
         int squareTile = squareTileFromScreenXY(x + 2, y + 8, elevation);
-        const TileFrmId frmId = static_cast<TileFrameId>(frameIdFromFid(_square[elevation]->fid[squareTile]));
-        if (frmId != TileFrameId::Grid) {
+        const TileFrameId frameId = FloorTileFrmId(_square[elevation]->tileFid[squareTile]).frameId<TileFrameId>();
+        if (frameId != TileFrameId::Grid) {
             break;
         }
     }
@@ -3414,7 +3550,7 @@ static unsigned int animationComputeTicksPerFrame(Object* object, const FrmId& f
     }
 
     if (isInCombat()) {
-        if (animationTypeFromFid(frmId.fid()) == ANIM_WALK) {
+        if (frmId.animationType() == ANIM_WALK) {
             if (object != gDude || settings.preferences.player_speedup) {
                 fps += settings.preferences.combat_speed;
             }

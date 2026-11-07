@@ -5,19 +5,24 @@
 
 namespace fallout {
 
-enum ConfigFlags {
-    CONFIG_DEFAULT = 0,
-    // Config will be read from DB (VFS)
-    CONFIG_IS_DB = (1 << 0),
-    // Keep existing comments when overwriting file. Also retains order.
-    CONFIG_RETAIN_COMMENTS = (1 << 1),
-    // Keep existing order of keys when overwriting file.
-    CONFIG_RETAIN_ORDER = (1 << 2),
-    // Keep sections and keys that are not in the saved config data when overwriting. Also retains order.
-    CONFIG_RETAIN_UNKNOWN = (1 << 3),
-    // Keep existing lines as much as possible when overwriting file, only add/update values.
-    CONFIG_RETAIN_ALL = CONFIG_RETAIN_COMMENTS | CONFIG_RETAIN_ORDER | CONFIG_RETAIN_UNKNOWN,
+enum class ConfigFlags : unsigned int {
+    Default = 0,
+    IsDatabase = 1, // Config will be read from DB (VFS)
+    RetainComments = 2, // Keep existing comments when overwriting file. Also retains order.
+    RetainOrder = 4, // Keep existing order of keys when overwriting file.
+    RetainUnknown = 8, // Keep sections and keys that are not in the saved config data when overwriting. Also retains order.
+    RetainAll = RetainComments | RetainOrder | RetainUnknown, // Keep existing lines as much as possible when overwriting file, only add/update values.
 };
+
+constexpr inline ConfigFlags operator&(ConfigFlags lhs, ConfigFlags rhs)
+{
+    return static_cast<ConfigFlags>(static_cast<unsigned int>(lhs) & static_cast<unsigned int>(rhs));
+}
+
+constexpr inline ConfigFlags operator|(ConfigFlags lhs, ConfigFlags rhs)
+{
+    return static_cast<ConfigFlags>(static_cast<unsigned int>(lhs) | static_cast<unsigned int>(rhs));
+}
 
 // A representation of .INI file.
 //
@@ -33,13 +38,18 @@ typedef Dictionary ConfigSection;
 
 bool configInit(Config* config);
 void configFree(Config* config);
-bool configParseCommandLineArguments(Config* config, int argc, char** argv);
+// Deep-copies into an initialized, empty destination. On failure, the
+// destination may contain a partial copy and must still be freed.
+bool configCopy(Config* destination, const Config* source);
+// Calls onOverride before replacing each successfully parsed section/key.
+bool configParseCommandLineArguments(Config* config, int argc, char** argv, void (*onOverride)(const char*, const char*) = nullptr);
 // TODO: valuePtr must be const char**
 bool configGetString(Config* config, const char* sectionKey, const char* key, char** valuePtr);
 // Tries to load a string value from Config into valuePtr without any conversion. If value doesn't exist, or it's an empty string, assigns defaultValue instead.
 // No copy is performed. The returned pointer may refer either to an internal string or to defaultValue; it must be treated as read-only, and callers must ensure defaultValue remains valid for the duration of use.
 bool configGetString(Config* config, const char* sectionKey, const char* key, char** valuePtr, const char* defaultValue);
 bool configSetString(Config* config, const char* sectionKey, const char* key, const char* value);
+bool configRemoveKey(Config* config, const char* sectionKey, const char* key);
 bool configGetInt(Config* config, const char* sectionKey, const char* key, int* valuePtr);
 bool configGetInt(Config* config, const char* sectionKey, const char* key, int* valuePtr, int defaultValue);
 bool configGetIntBase(Config* config, const char* sectionKey, const char* key, int* valuePtr, int defaultValue, int base);
@@ -72,7 +82,7 @@ bool configGetIntList(Config* config, const char* section, const char* key, int*
 bool configSetInt(Config* config, const char* sectionKey, const char* key, int value);
 bool configRead(Config* config, const char* filePath, bool isDb);
 bool configWrite(Config* config, const char* filePath, bool isDb);
-bool configWriteEx(Config* config, const char* filePath, int flags);
+bool configWriteEx(Config* config, const char* filePath, ConfigFlags flags);
 bool configGetDouble(Config* config, const char* sectionKey, const char* key, double* valuePtr);
 bool configSetDouble(Config* config, const char* sectionKey, const char* key, double value);
 

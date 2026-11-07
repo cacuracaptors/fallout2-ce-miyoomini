@@ -1,5 +1,6 @@
 #include "mapper/mp_instance.h"
 
+#include <array>
 #include <stdio.h>
 #include <string.h>
 
@@ -66,9 +67,7 @@ static int regModInstFlags(Object* obj);
 // proto_inst_edit_
 void protoInstEdit(Object* obj)
 {
-    if (obj == nullptr) return;
-
-    switch (objectTypeFromPid(obj->pid)) {
+    switch (ProtoId(obj).objectType()) {
     case OBJ_TYPE_ITEM:
         protoInstItemEdit(obj);
         break;
@@ -95,8 +94,9 @@ void protoInstEdit(Object* obj)
 // proto_inst_setup_edit_
 static int protoInstSetupEdit(int* pWinId, Object* obj, ObjectType* pObjType, int* pObjProtoOff, int* pBufOff, const char* title)
 {
+    const ProtoId protoId = obj;
     Proto* proto;
-    if (protoGetProto(obj->pid, &proto) == -1) {
+    if (protoGetProto(protoId, &proto) == -1) {
         return -1;
     }
 
@@ -111,7 +111,7 @@ static int protoInstSetupEdit(int* pWinId, Object* obj, ObjectType* pObjType, in
     if (win == -1) return -1;
 
     *pWinId = win;
-    *pObjType = objectTypeFromPid(obj->pid);
+    *pObjType = protoId.objectType();
     *pObjProtoOff = 0;
 
     windowDrawBorder(win);
@@ -126,22 +126,22 @@ static int protoInstSetupEdit(int* pWinId, Object* obj, ObjectType* pObjType, in
     windowDrawText(win, typeName, typeNameWidth, (kWinWidth - typeNameWidth) / 2, 28, COLOR_LIGHT_GREY | DRAW_TEXT_FLAG_SHADOWED);
 
     // Name button + value
-    _win_register_text_button(win, 10, 44, -1, -1, -1, kInstKeyName, "Name", 0);
+    _win_register_text_button(win, 10, 44, -1, -1, -1, kInstKeyName, "Name", BUTTON_FLAG_NONE);
     const char* objName = objectGetName(obj);
     windowDrawText(win, objName, 130, 90, 48, COLOR_LIGHT_YELLOW | DRAW_TEXT_FLAG_SHADOWED);
 
     // Flags button
-    _win_register_text_button(win, 10, 65, -1, -1, -1, kInstKeyFlags, "Flags", 0);
+    _win_register_text_button(win, 10, 65, -1, -1, -1, kInstKeyFlags, "Flags", BUTTON_FLAG_NONE);
 
     // Light Level button
-    _win_register_text_button(win, 10, 86, -1, -1, -1, kInstKeyLight, "Light Level", 0);
+    _win_register_text_button(win, 10, 86, -1, -1, -1, kInstKeyLight, "Light Level", BUTTON_FLAG_NONE);
 
     // Inventory buttons (only for items with container type 1 = misc)
     int y = 107;
     if (*pObjType == OBJ_TYPE_ITEM && itemGetType(obj) == ITEM_TYPE_MISC) {
-        _win_register_text_button(win, 98, y, -1, -1, -1, kInstKeyAddToInven, "Add to Inven", 0);
-        _win_register_text_button(win, 188, y, -1, -1, -1, kInstKeyViewInven, "View Inven", 0);
-        _win_register_text_button(win, 298, y, -1, -1, -1, kInstKeyClearInven, "Clear Inven", 0);
+        _win_register_text_button(win, 98, y, -1, -1, -1, kInstKeyAddToInven, "Add to Inven", BUTTON_FLAG_NONE);
+        _win_register_text_button(win, 188, y, -1, -1, -1, kInstKeyViewInven, "View Inven", BUTTON_FLAG_NONE);
+        _win_register_text_button(win, 298, y, -1, -1, -1, kInstKeyClearInven, "Clear Inven", BUTTON_FLAG_NONE);
     }
 
     // Art rendering area bounds
@@ -149,11 +149,11 @@ static int protoInstSetupEdit(int* pWinId, Object* obj, ObjectType* pObjType, in
     unsigned char* buf = windowGetBuffer(win);
     bufferDrawRect(buf + 12899, kWinWidth, 0, 0, 65, 49, COLOR_BLACK);
     bufferFill(buf + *pBufOff, kArtWidth, kArtHeight, kWinWidth, COLOR_BLUE_2);
-    artRender(FrmId(obj->fid), buf + *pBufOff, kArtWidth, kArtHeight, kWinWidth);
+    artRender(FrmId(obj), buf + *pBufOff, kArtWidth, kArtHeight, kWinWidth);
 
     // Script section
     int scriptY = y + 83;
-    _win_register_text_button(win, 10, scriptY, -1, -1, -1, kInstKeyNewScript, "New Script", 0);
+    _win_register_text_button(win, 10, scriptY, -1, -1, -1, kInstKeyNewScript, "New Script", BUTTON_FLAG_NONE);
 
     char scriptName[64];
     scriptName[0] = '\0';
@@ -172,7 +172,7 @@ static int protoInstSetupEdit(int* pWinId, Object* obj, ObjectType* pObjType, in
 
     // Done button
     y += 26;
-    _win_register_text_button(win, 10, y + 80, -1, -1, -1, kInstKeyDone, "Done", 0);
+    _win_register_text_button(win, 10, y + 80, -1, -1, -1, kInstKeyDone, "Done", BUTTON_FLAG_NONE);
 
     windowRefresh(win);
     return 0;
@@ -252,7 +252,7 @@ static bool regModFlagsDialog(ObjectFlags* flags, ObjectType objectType)
             flagValues[i] = 0;
         }
 
-        _win_register_text_button(win, kBtnX, yPos, -1, -1, -1, btnDefs[i].key, btnDefs[i].name, 0);
+        _win_register_text_button(win, kBtnX, yPos, -1, -1, -1, btnDefs[i].key, btnDefs[i].name, BUTTON_FLAG_NONE);
 
         windowDrawText(win,
             flagValues[i] ? "YES" : "NO",
@@ -266,7 +266,7 @@ static bool regModFlagsDialog(ObjectFlags* flags, ObjectType objectType)
 
     // Done button
     constexpr int kDoneKey = KEY_ESCAPE;
-    _win_register_text_button(win, kBtnX, yPos + 10, -1, -1, -1, kDoneKey, "Done", 0);
+    _win_register_text_button(win, kBtnX, yPos + 10, -1, -1, -1, kDoneKey, "Done", BUTTON_FLAG_NONE);
 
     windowRefresh(win);
 
@@ -323,7 +323,7 @@ static int regModInstFlags(Object* obj)
 {
     ObjectFlags flags = obj->flags;
     ObjectFlags oldFlat = flags & OBJECT_FLAT;
-    ObjectType objectType = objectTypeFromPid(obj->pid);
+    ObjectType objectType = ProtoId(obj).objectType();
 
     if (regModFlagsDialog(&flags, objectType)) {
         bool flatChanged = ((oldFlat != OBJECT_NONE) != ((flags & OBJECT_FLAT) != OBJECT_NONE));
@@ -358,17 +358,17 @@ static int applyLightEdit(Object* obj)
     return 1;
 }
 
-static void selectNewScript(Object* obj, int scriptType, int winId, int scriptNameY)
+static void selectNewScript(Object* obj, ScriptType scriptType, int winId, int scriptNameY)
 {
-    int scriptIndex = scr_choose(scriptType);
-    if (scriptIndex != -1) {
+    int sid = scr_choose(scriptType);
+    if (sid != -1) {
         if (obj->sid != -1) {
             scriptRemove(obj->sid);
             obj->sid = -1;
         }
     }
-    if (scriptIndex >= 0) {
-        objectSetScript(obj, scriptIndex >> 24, scriptIndex & 0xFFFFFF);
+    if (sid >= 0) {
+        objectSetScript(obj, scriptTypeFromSid(sid), scriptIdFromSid(sid));
     }
 
     char scriptName[64];
@@ -425,17 +425,17 @@ static int protoInstItemEdit(Object* obj)
 }
 
 // proto_inst_add_to_inven
-static int protoInstAddToInven(int pid, int count)
+static int protoInstAddToInven(const ProtoId& protoId, int count)
 {
     if (proto_inst_who_obj == nullptr) return -1;
 
     Proto* proto;
-    if (protoGetProto(pid, &proto) == -1) return 0;
+    if (protoGetProto(protoId, &proto) == -1) return 0;
 
     Object* newObj;
-    if (objectCreateWithFrmIdPid(&newObj, FrmId(proto->fid), pid) == -1) return 0;
+    if (objectCreateWithFrmIdProtoId(&newObj, proto, protoId) == -1) return 0;
 
-    objectSetLocation(newObj, 0, 0, nullptr);
+    objectSetLocation(newObj, 0, ELEVATION_FIRST, nullptr);
 
     if (itemAdd(proto_inst_who_obj, newObj, count) != 0) {
         win_timed_msg("Error adding obj to critter!", COLOR_LIGHT_YELLOW | DRAW_TEXT_FLAG_SHADOWED);
@@ -447,18 +447,18 @@ static int protoInstAddToInven(int pid, int count)
 }
 
 // proto_choose_pid_inven_fid
-static int protoInstChoosePidInvenFid(Proto* proto)
+static FrmId protoInstChoosePidInvenFrmId(Proto* proto)
 {
-    if (objectTypeFromPid(proto->pid) != OBJ_TYPE_ITEM) return -1;
-    if (proto->item.inventoryFid == -1) return proto->fid;
-    return proto->item.inventoryFid;
+    if (ProtoId(proto).objectType() != OBJ_TYPE_ITEM) return FrmId::Empty();
+    const FrmId inventoryFrmId = FrmId(proto->item.inventoryFid);
+    return inventoryFrmId.valid() ? inventoryFrmId : proto;
 }
 
 // proto_inst_add_to_inven - grid-based proto picker (original implementation)
 static void protoInstChooseItemsForInvenGrid(Object* obj)
 {
     proto_inst_who_obj = obj;
-    protoChooseMultiPids(OBJ_TYPE_ITEM, protoInstChoosePidInvenFid, protoInstAddToInven);
+    protoChooseMultiPids(OBJ_TYPE_ITEM, protoInstChoosePidInvenFrmId, protoInstAddToInven);
     proto_inst_who_obj = nullptr;
 }
 
@@ -468,33 +468,33 @@ static void protoInstChooseItemsForInvenList(Object* obj)
     proto_inst_who_obj = obj;
 
     constexpr int kMaxItems = 200;
-    char** names = static_cast<char**>(internal_malloc(sizeof(char*) * kMaxItems));
-    int* pids = static_cast<int*>(internal_malloc(sizeof(int) * kMaxItems));
+    std::array<char*, kMaxItems> names;
+    std::array<ProtoId, kMaxItems> protoIds;
     int count = 0;
 
     for (int pid = 0x00000001; count < kMaxItems; pid++) {
+        const ProtoId protoId = ProtoId(pid);
         Proto* proto;
-        if (protoGetProto(pid, &proto) == -1) break;
-        if (objectTypeFromPid(pid) != OBJ_TYPE_ITEM) continue;
+        if (protoGetProto(protoId, &proto) == -1) break;
+        if (protoId.objectType() != OBJ_TYPE_ITEM) continue;
 
         names[count] = static_cast<char*>(internal_malloc(64));
-        snprintf(names[count], 64, "%s", protoGetName(pid));
-        pids[count] = pid;
+        snprintf(names[count], 64, "%s", protoGetName(protoId));
+        protoIds[count] = protoId;
         count++;
     }
 
-    int selection = _win_list_select("Pick item to add", names, count, nullptr, 80, 200, COLOR_LIGHT_YELLOW | DRAW_TEXT_FLAG_SHADOWED);
+    int selection = _win_list_select("Pick item to add", names.data(), count, nullptr, 80, 200, COLOR_LIGHT_YELLOW | DRAW_TEXT_FLAG_SHADOWED);
     if (selection != -1) {
         int quantity = 1;
         win_get_num_i(&quantity, 1, 32000, false, "How many?", 100, 100);
-        protoInstAddToInven(pids[selection], quantity);
+        protoInstAddToInven(protoIds[selection], quantity);
     }
 
     for (int i = 0; i < count; i++) {
         internal_free(names[i]);
     }
-    internal_free(names);
-    internal_free(pids);
+
     proto_inst_who_obj = nullptr;
 }
 
@@ -513,20 +513,20 @@ static int protoInstCritterEdit(Object* obj)
 
         // Critter-specific buttons
         constexpr int kBaseY = 107;
-        _win_register_text_button(winId, 10, kBaseY, -1, -1, -1, kInstKeyAddToInven, "Add to Inventory", 0);
-        _win_register_text_button(winId, 10, kBaseY + 21, -1, -1, -1, kInstKeyViewInven, "View Inventory List", 0);
-        _win_register_text_button(winId, 10, kBaseY + 42, -1, -1, -1, kInstKeyClearInven, "Clear Inventory", 0);
+        _win_register_text_button(winId, 10, kBaseY, -1, -1, -1, kInstKeyAddToInven, "Add to Inventory", BUTTON_FLAG_NONE);
+        _win_register_text_button(winId, 10, kBaseY + 21, -1, -1, -1, kInstKeyViewInven, "View Inventory List", BUTTON_FLAG_NONE);
+        _win_register_text_button(winId, 10, kBaseY + 42, -1, -1, -1, kInstKeyClearInven, "Clear Inventory", BUTTON_FLAG_NONE);
 
         // AI Packet
         constexpr int kAiY = kBaseY + 63;
-        _win_register_text_button(winId, 10, kAiY, -1, -1, -1, kInstKeyAiPacket, "AI Packet", 0);
+        _win_register_text_button(winId, 10, kAiY, -1, -1, -1, kInstKeyAiPacket, "AI Packet", BUTTON_FLAG_NONE);
         const char* aiName = combat_ai_name(obj->data.critter.combat.aiPacket);
         if (aiName == nullptr) aiName = "<Error>";
         windowDrawText(winId, aiName, 80, 100, kAiY + 4, COLOR_LIGHT_YELLOW | DRAW_TEXT_FLAG_SHADOWED);
 
         // Team Num
         constexpr int kTeamY = kAiY;
-        _win_register_text_button(winId, 240, kTeamY, -1, -1, -1, kInstKeyTeamNum, "Team Num", 0);
+        _win_register_text_button(winId, 240, kTeamY, -1, -1, -1, kInstKeyTeamNum, "Team Num", BUTTON_FLAG_NONE);
         char teamStr[16];
         snprintf(teamStr, sizeof(teamStr), "%d", obj->data.critter.combat.team);
         windowDrawText(winId, teamStr, 80, 320, kTeamY + 4, COLOR_LIGHT_YELLOW | DRAW_TEXT_FLAG_SHADOWED);
@@ -586,12 +586,12 @@ static int protoInstCritterEdit(Object* obj)
             } else if (key == kInstKeyViewInven) {
                 windowDestroy(winId);
 
-                inventorySetDude(obj, obj->pid);
+                inventorySetDude(obj, obj);
                 inventoryOpen();
                 inventoryResetDude();
 
                 Object* rightHandItem = critterGetItem2(obj);
-                WeaponAnimation animCode = WEAPON_ANIMATION_NONE;
+                WeaponAnimation animCode = WeaponAnimation::None;
                 if (rightHandItem != nullptr && itemGetType(rightHandItem) == ITEM_TYPE_WEAPON) {
                     animCode = weaponGetAnimationCode(rightHandItem);
                 }
@@ -717,7 +717,7 @@ static int protoInstSceneryEdit(Object* obj)
     int bufOff;
 
     Proto* proto;
-    if (protoGetProto(obj->pid, &proto) == -1) {
+    if (protoGetProto(obj, &proto) == -1) {
         return -1;
     }
 
@@ -729,15 +729,15 @@ static int protoInstSceneryEdit(Object* obj)
     int sceneryType = proto->scenery.type;
     int y = 107;
     if (sceneryType != SCENERY_TYPE_GENERIC && sceneryType != SCENERY_TYPE_ELEVATOR) {
-        _win_register_text_button(winId, 10, y, -1, -1, -1, 'd', "Dest Tile", 0);
+        _win_register_text_button(winId, 10, y, -1, -1, -1, 'd', "Dest Tile", BUTTON_FLAG_NONE);
         y += 21;
-        _win_register_text_button(winId, 10, y, -1, -1, -1, 'e', "Dest Elev", 0);
+        _win_register_text_button(winId, 10, y, -1, -1, -1, 'e', "Dest Elev", BUTTON_FLAG_NONE);
         y += 21;
-        _win_register_text_button(winId, 10, y, -1, -1, -1, 'm', "Dest Map", 0);
+        _win_register_text_button(winId, 10, y, -1, -1, -1, 'm', "Dest Map", BUTTON_FLAG_NONE);
         y += 21;
 
         if (sceneryType == SCENERY_TYPE_LADDER_DOWN || sceneryType == SCENERY_TYPE_LADDER_UP) {
-            _win_register_text_button(winId, 10, y, -1, -1, -1, 't', "Ladder Type", 0);
+            _win_register_text_button(winId, 10, y, -1, -1, -1, 't', "Ladder Type", BUTTON_FLAG_NONE);
         }
     }
     windowRefresh(winId);
@@ -767,17 +767,19 @@ static int protoInstSceneryEdit(Object* obj)
                 ? builtTileGetTile(obj->data.scenery.ladder.destinationBuiltTile)
                 : 0;
             if (win_get_num_i(&destTile, 0, 40000, false, "Destination Tile", 100, 100) != -1) {
-                int elev = (obj->data.scenery.ladder.destinationBuiltTile != -1)
+                MapElevation elev = (obj->data.scenery.ladder.destinationBuiltTile != -1)
                     ? builtTileGetElevation(obj->data.scenery.ladder.destinationBuiltTile)
-                    : 0;
+                    : ELEVATION_FIRST;
                 obj->data.scenery.ladder.destinationBuiltTile = builtTileCreate(destTile, elev);
                 windowRefresh(winId);
             }
         } else if (key == 'e' && sceneryType != SCENERY_TYPE_GENERIC && sceneryType != SCENERY_TYPE_ELEVATOR) {
-            int destElev = (obj->data.scenery.ladder.destinationBuiltTile != -1)
+            MapElevation destElev = (obj->data.scenery.ladder.destinationBuiltTile != -1)
                 ? builtTileGetElevation(obj->data.scenery.ladder.destinationBuiltTile)
-                : 0;
-            if (win_get_num_i(&destElev, 0, 3, false, "Destination Elevation", 100, 100) != -1) {
+                : ELEVATION_FIRST;
+            int destElevNumber = static_cast<int>(destElev);
+            if (win_get_num_i(&destElevNumber, ELEVATION_FIRST, ELEVATION_COUNT, false, "Destination Elevation", 100, 100) != -1) {
+                destElev = static_cast<MapElevation>(destElevNumber);
                 int tile = (obj->data.scenery.ladder.destinationBuiltTile != -1)
                     ? builtTileGetTile(obj->data.scenery.ladder.destinationBuiltTile)
                     : 0;

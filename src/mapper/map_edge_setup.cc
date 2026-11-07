@@ -44,7 +44,7 @@ enum class EditMode {
 static bool active = false; // dialog open → draw the overlay
 static bool showAllRects = false; // persistent overlay toggle (Settings menu)
 static EditMode editMode = EditMode::Tiles;
-static int workingElevation = 0;
+static MapElevation workingElevation = ELEVATION_FIRST;
 static int activeRect = -1;
 static EdgeSide moveSide = EdgeSide::None;
 static int moveOrigValue = 0; // side value to restore on Cancel move
@@ -106,9 +106,9 @@ static Rect fullGridTileRect()
     return result;
 }
 
-static void editorOpen(int elevation, EditMode mode)
+static void editorOpen(MapElevation elevation, EditMode mode)
 {
-    for (int elev = 0; elev < ELEVATION_COUNT; elev++) {
+    for (MapElevation elev = ELEVATION_FIRST; elev < ELEVATION_COUNT; elev++) {
         backup[elev] = mapEdgeGetElevationData(elev);
     }
 
@@ -127,7 +127,7 @@ static void editorClose(bool save)
         }
         mapEdgeRecalc();
     } else {
-        for (int elev = 0; elev < ELEVATION_COUNT; elev++) {
+        for (MapElevation elev = ELEVATION_FIRST; elev < ELEVATION_COUNT; elev++) {
             mapEdgeGetElevationData(elev) = backup[elev];
         }
     }
@@ -351,7 +351,7 @@ static void drawClippedLine(unsigned char* buffer, int pitch, const Rect* clip, 
 
 // Screen positions of the four outline vertices enclosing the visible squares of sr.
 // Indices: 0 top, 1 left, 2 bottom, 3 right (each offset to a cell corner by the basis).
-static void squareRectScreenCorners(const Rect& sr, int elevation, int outX[4], int outY[4])
+static void squareRectScreenCorners(const Rect& sr, MapElevation elevation, int outX[4], int outY[4])
 {
     auto corner = [&](int col, int row, int dx, int dy, int index) {
         int x;
@@ -397,7 +397,7 @@ static Color squareSideColor(EdgeSide side)
 }
 
 // Outlines the squareRect over the iso view, one diagonal edge per side.
-static void drawSquareOverlay(unsigned char* buffer, int pitch, int elevation, const Rect* clip)
+static void drawSquareOverlay(unsigned char* buffer, int pitch, MapElevation elevation, const Rect* clip)
 {
     int cx[4];
     int cy[4];
@@ -413,7 +413,7 @@ static void drawSquareOverlay(unsigned char* buffer, int pitch, int elevation, c
 // Registered as the tile renderer's overlay hook. While a dialog is open, only the active
 // rect is drawn (plus the moving side highlighted). Otherwise the persistent toggle outlines
 // every edge rect. Never drawn in play mode.
-static void renderOverlay(unsigned char* buffer, int pitch, int elevation, const Rect* clip)
+static void renderOverlay(unsigned char* buffer, int pitch, MapElevation elevation, const Rect* clip)
 {
     if (!mapEdgeIsMapperMode()) {
         return;
@@ -524,11 +524,11 @@ static void runEditLoop(int win, int winX, int winY, int winW, int winH,
                 done = true;
             }
         } else if (keyCode == -2) {
-            int buttons = mouseGetEvent();
-            if (moving && (buttons & MOUSE_EVENT_LEFT_BUTTON_DOWN) && !overDialog) {
+            MouseButtonEvent mouseEvent = mouseGetEvent();
+            if (moving && (mouseEvent & MouseButtonEvent::LeftButtonDown) != MouseButtonEvent::None && !overDialog) {
                 editorCommitMove();
                 refreshAll();
-            } else if (moving && (buttons & MOUSE_EVENT_RIGHT_BUTTON_DOWN)) {
+            } else if (moving && (mouseEvent & MouseButtonEvent::RightButtonDown) != MouseButtonEvent::None) {
                 editorCancelMove();
                 refreshAll();
             }
@@ -649,16 +649,16 @@ void mapEdgeSetupDialog()
     const int lineHeight = fontGetLineHeight();
     auto centeredX = [&](const char* text) { return (kDialogWidth - fontGetStringWidth(text)) / 2; };
 
-    _win_register_text_button(win, 12, 58, -1, -1, -1, kEvAddRect, "Add Rect", 0);
-    _win_register_text_button(win, 120, 58, -1, -1, -1, kEvDelRect, "Delete Rect", 0);
-    _win_register_text_button(win, 12, 86, -1, -1, -1, kEvPrevRect, "<<", 0);
-    _win_register_text_button(win, 180, 86, -1, -1, -1, kEvNextRect, ">>", 0);
-    _win_register_text_button(win, 96, 108, -1, -1, -1, kEvSideTop, "Top", 0);
-    _win_register_text_button(win, 90, 190, -1, -1, -1, kEvSideBottom, "Bottom", 0);
-    _win_register_text_button(win, 12, 148, -1, -1, -1, kEvSideLeft, "Left", 0);
-    _win_register_text_button(win, 174, 148, -1, -1, -1, kEvSideRight, "Right", 0);
-    _win_register_text_button(win, 12, 222, -1, -1, -1, kEvCancel, "Cancel", 0);
-    _win_register_text_button(win, 160, 222, -1, -1, -1, kEvSave, "Save", 0);
+    _win_register_text_button(win, 12, 58, -1, -1, -1, kEvAddRect, "Add Rect", BUTTON_FLAG_NONE);
+    _win_register_text_button(win, 120, 58, -1, -1, -1, kEvDelRect, "Delete Rect", BUTTON_FLAG_NONE);
+    _win_register_text_button(win, 12, 86, -1, -1, -1, kEvPrevRect, "<<", BUTTON_FLAG_NONE);
+    _win_register_text_button(win, 180, 86, -1, -1, -1, kEvNextRect, ">>", BUTTON_FLAG_NONE);
+    _win_register_text_button(win, 96, 108, -1, -1, -1, kEvSideTop, "Top", BUTTON_FLAG_NONE);
+    _win_register_text_button(win, 90, 190, -1, -1, -1, kEvSideBottom, "Bottom", BUTTON_FLAG_NONE);
+    _win_register_text_button(win, 12, 148, -1, -1, -1, kEvSideLeft, "Left", BUTTON_FLAG_NONE);
+    _win_register_text_button(win, 174, 148, -1, -1, -1, kEvSideRight, "Right", BUTTON_FLAG_NONE);
+    _win_register_text_button(win, 12, 222, -1, -1, -1, kEvCancel, "Cancel", BUTTON_FLAG_NONE);
+    _win_register_text_button(win, 160, 222, -1, -1, -1, kEvSave, "Save", BUTTON_FLAG_NONE);
 
     // Repaints only the parts that change with editor state, then blits the window.
     auto render = [&]() {
@@ -748,19 +748,19 @@ void mapEdgeSquareSetupDialog()
     windowDrawText(win, "All Objects", 0, 12, 62, _colorTable[kClipAllColor] | DRAW_TEXT_FLAG_NONE);
     windowDrawText(win, "Low Objects", 0, 12, 74, _colorTable[kClipLowColor] | DRAW_TEXT_FLAG_NONE);
 
-    _win_register_text_button(win, 113, 64, -1, -1, -1, kEvDefaultReset, "Default Reset", 0);
+    _win_register_text_button(win, 113, 64, -1, -1, -1, kEvDefaultReset, "Default Reset", BUTTON_FLAG_NONE);
 
-    _win_register_text_button(win, 51, 114, -1, -1, -1, kEvSideTop, "mv", 0);
-    _win_register_text_button(win, 88, 137, -1, -1, -1, kEvClipTop, "clp", 0);
-    _win_register_text_button(win, 43, 167, -1, -1, -1, kEvSideLeft, "mv", 0);
-    _win_register_text_button(win, 78, 156, -1, -1, -1, kEvClipLeft, "clp", 0);
-    _win_register_text_button(win, 166, 131, -1, -1, -1, kEvSideRight, "mv", 0);
-    _win_register_text_button(win, 125, 143, -1, -1, -1, kEvClipRight, "clp", 0);
-    _win_register_text_button(win, 138, 184, -1, -1, -1, kEvSideBottom, "mv", 0);
-    _win_register_text_button(win, 114, 161, -1, -1, -1, kEvClipBottom, "clp", 0);
+    _win_register_text_button(win, 51, 114, -1, -1, -1, kEvSideTop, "mv", BUTTON_FLAG_NONE);
+    _win_register_text_button(win, 88, 137, -1, -1, -1, kEvClipTop, "clp", BUTTON_FLAG_NONE);
+    _win_register_text_button(win, 43, 167, -1, -1, -1, kEvSideLeft, "mv", BUTTON_FLAG_NONE);
+    _win_register_text_button(win, 78, 156, -1, -1, -1, kEvClipLeft, "clp", BUTTON_FLAG_NONE);
+    _win_register_text_button(win, 166, 131, -1, -1, -1, kEvSideRight, "mv", BUTTON_FLAG_NONE);
+    _win_register_text_button(win, 125, 143, -1, -1, -1, kEvClipRight, "clp", BUTTON_FLAG_NONE);
+    _win_register_text_button(win, 138, 184, -1, -1, -1, kEvSideBottom, "mv", BUTTON_FLAG_NONE);
+    _win_register_text_button(win, 114, 161, -1, -1, -1, kEvClipBottom, "clp", BUTTON_FLAG_NONE);
 
-    _win_register_text_button(win, 30, 224, -1, -1, -1, kEvCancel, "Cancel", 0);
-    _win_register_text_button(win, 143, 224, -1, -1, -1, kEvSave, "Save", 0);
+    _win_register_text_button(win, 30, 224, -1, -1, -1, kEvCancel, "Cancel", BUTTON_FLAG_NONE);
+    _win_register_text_button(win, 143, 224, -1, -1, -1, kEvSave, "Save", BUTTON_FLAG_NONE);
 
     auto render = [&]() {
         // Skewed diagram: fixed edges colored by clip mode (green while moving). Repainted

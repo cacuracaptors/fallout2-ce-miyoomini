@@ -36,6 +36,7 @@
 #include "settings.h"
 #include "skill.h"
 #include "stat.h"
+#include "string_utils.h"
 #include "svga.h"
 #include "text_font.h"
 #include "tile.h"
@@ -432,7 +433,7 @@ int interfaceInit()
         return intface_fatal_error(-1);
     }
 
-    gInventoryButton = buttonCreate(gInterfaceBarWindow, 211 + gInterfaceBarContentOffset, 40, 32, 21, -1, -1, -1, KEY_LOWERCASE_I, _inventoryButtonNormalFrmImage.getData(), _inventoryButtonPressedFrmImage.getData(), nullptr, 0);
+    gInventoryButton = buttonCreate(gInterfaceBarWindow, 211 + gInterfaceBarContentOffset, 40, 32, 21, -1, -1, -1, KEY_LOWERCASE_I, _inventoryButtonNormalFrmImage.getData(), _inventoryButtonPressedFrmImage.getData(), nullptr, BUTTON_FLAG_NONE);
     if (gInventoryButton == -1) {
         // NOTE: Uninline.
         return intface_fatal_error(-1);
@@ -450,7 +451,7 @@ int interfaceInit()
         return intface_fatal_error(-1);
     }
 
-    gOptionsButton = buttonCreate(gInterfaceBarWindow, 210 + gInterfaceBarContentOffset, 61, 34, 34, -1, -1, -1, KEY_LOWERCASE_O, _optionsButtonNormalFrmImage.getData(), _optionsButtonPressedFrmImage.getData(), nullptr, 0);
+    gOptionsButton = buttonCreate(gInterfaceBarWindow, 210 + gInterfaceBarContentOffset, 61, 34, 34, -1, -1, -1, KEY_LOWERCASE_O, _optionsButtonNormalFrmImage.getData(), _optionsButtonPressedFrmImage.getData(), nullptr, BUTTON_FLAG_NONE);
     if (gOptionsButton == -1) {
         // NOTE: Uninline.
         return intface_fatal_error(-1);
@@ -516,7 +517,7 @@ int interfaceInit()
         return intface_fatal_error(-1);
     }
 
-    gPipboyButton = buttonCreate(gInterfaceBarWindow, 526 + gInterfaceBarContentOffset, 77, 41, 19, -1, -1, -1, KEY_LOWERCASE_P, _pipboyButtonNormalFrmImage.getData(), _pipboyButtonPressedFrmImage.getData(), nullptr, 0);
+    gPipboyButton = buttonCreate(gInterfaceBarWindow, 526 + gInterfaceBarContentOffset, 77, 41, 19, -1, -1, -1, KEY_LOWERCASE_P, _pipboyButtonNormalFrmImage.getData(), _pipboyButtonPressedFrmImage.getData(), nullptr, BUTTON_FLAG_NONE);
     if (gPipboyButton == -1) {
         // NOTE: Uninline.
         return intface_fatal_error(-1);
@@ -535,7 +536,7 @@ int interfaceInit()
         return intface_fatal_error(-1);
     }
 
-    gCharacterButton = buttonCreate(gInterfaceBarWindow, 526 + gInterfaceBarContentOffset, 58, 41, 19, -1, -1, -1, KEY_LOWERCASE_C, _characterButtonNormalFrmImage.getData(), _characterButtonPressedFrmImage.getData(), nullptr, 0);
+    gCharacterButton = buttonCreate(gInterfaceBarWindow, 526 + gInterfaceBarContentOffset, 58, 41, 19, -1, -1, -1, KEY_LOWERCASE_C, _characterButtonNormalFrmImage.getData(), _characterButtonPressedFrmImage.getData(), nullptr, BUTTON_FLAG_NONE);
     if (gCharacterButton == -1) {
         // NOTE: Uninline.
         return intface_fatal_error(-1);
@@ -795,6 +796,21 @@ int interfaceLoad(File* stream)
     // from the actual equipped items instead of reusing stale pre-load state.
     intface_init_items();
     interfaceUpdateItems(false, INTERFACE_ITEM_ACTION_DEFAULT, INTERFACE_ITEM_ACTION_DEFAULT);
+
+    // The loaded dude FID can retain a weapon animation from before equipment was restored.
+    Object* activeItem;
+    if (interfaceGetActiveItem(&activeItem) == 0) {
+        WeaponAnimation weaponAnimation = WeaponAnimation::None;
+        if (itemGetType(activeItem) == ITEM_TYPE_WEAPON) {
+            weaponAnimation = weaponGetAnimationCode(activeItem);
+        }
+
+        const FrmId dudeFrmId = gDude;
+        if (dudeFrmId.weaponAnimation() != weaponAnimation) {
+            debugPrint("\nLOADSAVE: Detected dude weapon animation mismatch! Correcting weapon animation from %d to %d ...", static_cast<int>(dudeFrmId.weaponAnimation()), static_cast<int>(weaponAnimation));
+            objectSetFrmId(gDude, CritterFrmId(dudeFrmId.frameId<CritterFrameId>(), dudeFrmId.animationType(), weaponAnimation, dudeFrmId.rotation()), nullptr);
+        }
+    }
 
     if (interfaceBarEndButtonsIsVisible != gInterfaceBarEndButtonsIsVisible) {
         if (interfaceBarEndButtonsIsVisible) {
@@ -1218,14 +1234,14 @@ int interfaceUpdateItems(bool animated, InterfaceItemAction leftItemAction, Inte
     if (animated) {
         Object* newCurrentItem = gInterfaceItemStates[gInterfaceCurrentHand].item;
         if (newCurrentItem != oldCurrentItem) {
-            WeaponAnimation animationCode = WEAPON_ANIMATION_NONE;
+            WeaponAnimation animationCode = WeaponAnimation::None;
             if (newCurrentItem != nullptr) {
                 if (itemGetType(newCurrentItem) == ITEM_TYPE_WEAPON) {
                     animationCode = weaponGetAnimationCode(newCurrentItem);
                 }
             }
 
-            interfaceBarSwapHandsAnimatePutAwayTakeOutSequence(weaponAnimationFromFid(gDude->fid), animationCode);
+            interfaceBarSwapHandsAnimatePutAwayTakeOutSequence(FrmId(gDude).weaponAnimation(), animationCode);
 
             return 0;
         }
@@ -1247,14 +1263,14 @@ int interfaceBarSwapHands(bool animated)
 
     if (animated) {
         Object* item = gInterfaceItemStates[gInterfaceCurrentHand].item;
-        WeaponAnimation animationCode = WEAPON_ANIMATION_NONE;
+        WeaponAnimation animationCode = WeaponAnimation::None;
         if (item != nullptr) {
             if (itemGetType(item) == ITEM_TYPE_WEAPON) {
                 animationCode = weaponGetAnimationCode(item);
             }
         }
 
-        interfaceBarSwapHandsAnimatePutAwayTakeOutSequence(weaponAnimationFromFid(gDude->fid), animationCode);
+        interfaceBarSwapHandsAnimatePutAwayTakeOutSequence(FrmId(gDude).weaponAnimation(), animationCode);
     } else {
         interfaceBarRefreshMainAction();
     }
@@ -1371,7 +1387,7 @@ void _intface_use_item()
                 _combat(nullptr);
             }
         }
-    } else if (_proto_action_can_use_on(ptr->item->pid)) {
+    } else if (_proto_action_can_use_on(ptr->item)) {
         gameMouseSetCursor(MOUSE_CURSOR_USE_CROSSHAIR);
         gameMouseSetMode(GAME_MOUSE_MODE_USE_CROSSHAIR);
     } else if (_obj_action_can_use(ptr->item)) {
@@ -1638,7 +1654,7 @@ static int interfaceBarRefreshMainAction()
 
         if (itemState->isWeapon == 0) {
             InterfaceFrmId frmId;
-            if (_proto_action_can_use_on(itemState->item->pid)) {
+            if (_proto_action_can_use_on(itemState->item)) {
                 frmId = InterfaceFrameId::UseOnText;
             } else if (_obj_action_can_use(itemState->item)) {
                 frmId = InterfaceFrameId::UseText;
@@ -1885,8 +1901,8 @@ static void interfaceBarSwapHandsAnimatePutAwayTakeOutSequence(WeaponAnimation p
     reg_anim_begin(ANIMATION_REQUEST_RESERVED);
     animationRegisterSetLightDistance(gDude, 4, 0);
 
-    if (previousWeaponAnimationCode != WEAPON_ANIMATION_NONE) {
-        const char* sfx = sfxBuildCharName(gDude, ANIM_PUT_AWAY, CHARACTER_SOUND_EFFECT_UNUSED);
+    if (previousWeaponAnimationCode != WeaponAnimation::None) {
+        const char* sfx = sfxBuildCharName(gDude, ANIM_PUT_AWAY, CharacterSoundEffect::Unused);
         animationRegisterPlaySoundEffect(gDude, sfx, 0);
         animationRegisterAnimate(gDude, ANIM_PUT_AWAY, 0);
     }
@@ -1899,10 +1915,10 @@ static void interfaceBarSwapHandsAnimatePutAwayTakeOutSequence(WeaponAnimation p
         animationRegisterSetLightDistance(gDude, item->lightDistance, 0);
     }
 
-    if (weaponAnimationCode != WEAPON_ANIMATION_NONE) {
+    if (weaponAnimationCode != WeaponAnimation::None) {
         animationRegisterTakeOutWeapon(gDude, weaponAnimationCode, -1);
     } else {
-        const FrmId frmId = FrmId(gDude, ANIM_STAND, WEAPON_ANIMATION_NONE, gDude->rotation + 1);
+        const FrmId frmId = FrmId(gDude, ANIM_STAND, WeaponAnimation::None, gDude->rotation + 1);
         animationRegisterSetFrmId(gDude, frmId, -1);
     }
 
@@ -1961,7 +1977,7 @@ static int endTurnButtonInit()
         return -1;
     }
 
-    gEndTurnButton = buttonCreate(gInterfaceBarWindow, 590 + gInterfaceBarContentOffset, 43, 38, 22, -1, -1, -1, 32, _endTurnButtonNormalFrmImage.getData(), _endTurnButtonPressedFrmImage.getData(), nullptr, 0);
+    gEndTurnButton = buttonCreate(gInterfaceBarWindow, 590 + gInterfaceBarContentOffset, 43, 38, 22, -1, -1, -1, 32, _endTurnButtonNormalFrmImage.getData(), _endTurnButtonPressedFrmImage.getData(), nullptr, BUTTON_FLAG_NONE);
     if (gEndTurnButton == -1) {
         return -1;
     }
@@ -2009,7 +2025,7 @@ static int endCombatButtonInit()
         return -1;
     }
 
-    gEndCombatButton = buttonCreate(gInterfaceBarWindow, 590 + gInterfaceBarContentOffset, 65, 38, 22, -1, -1, -1, 13, _endCombatButtonNormalFrmImage.getData(), _endCombatButtonPressedFrmImage.getData(), nullptr, 0);
+    gEndCombatButton = buttonCreate(gInterfaceBarWindow, 590 + gInterfaceBarContentOffset, 65, 38, 22, -1, -1, -1, 13, _endCombatButtonNormalFrmImage.getData(), _endCombatButtonPressedFrmImage.getData(), nullptr, BUTTON_FLAG_NONE);
     if (gEndCombatButton == -1) {
         return -1;
     }
@@ -2264,7 +2280,7 @@ static int _intface_item_reload()
         return -1;
     }
 
-    const char* sfx = sfxBuildWeaponName(WEAPON_SOUND_EFFECT_READY, gInterfaceItemStates[gInterfaceCurrentHand].item, HIT_MODE_RIGHT_WEAPON_PRIMARY, nullptr);
+    const char* sfx = sfxBuildWeaponName(WeaponSoundEffect::Ready, gInterfaceItemStates[gInterfaceCurrentHand].item, HIT_MODE_RIGHT_WEAPON_PRIMARY, nullptr);
     soundPlayFile(sfx);
 
     return 0;
@@ -2412,7 +2428,7 @@ static int indicatorBarInit()
     }
 
     char path[COMPAT_MAX_PATH];
-    snprintf(path, sizeof(path), "%s%s", asc_5186C8, "intrface.msg");
+    snprintf(path, sizeof(path), "%s%s", gGameMsgPath, "intrface.msg");
 
     if (rc != -1) {
         if (!messageListLoad(&messageList, path)) {
@@ -2456,7 +2472,7 @@ static int indicatorBarInit()
         IndicatorDescription* indicator = &(gIndicatorDescriptions[index]);
 
         char text[1024];
-        strcpy(text, getmsg(&messageList, &messageListItem, indicator->title));
+        stringCopy(text, getmsg(&messageList, &messageListItem, indicator->title));
 
         Color color = indicator->isBad ? COLOR_RED : COLOR_GREEN;
         indicatorBarRenderBox(indicator->data, text, color);
@@ -2599,7 +2615,7 @@ int indicatorBarRefresh()
                 (INDICATOR_BOX_WIDTH - INDICATOR_BOX_CONNECTOR_WIDTH) * count,
                 INDICATOR_BOX_HEIGHT,
                 COLOR_BLACK,
-                0);
+                WINDOW_NONE);
             indicatorBarRender(count);
             windowRefresh(gIndicatorBarWindow);
         }

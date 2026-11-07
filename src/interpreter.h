@@ -4,9 +4,14 @@
 #include "animation_defs.h"
 #include "combat_defs.h"
 #include "game.h"
+#include "game_movie.h"
+#include "game_sound.h"
 #include "object.h"
 #include "proto_types.h"
+#include "random.h"
+#include "sfall_lists.h"
 #include "stat_defs.h"
+#include "window_defs.h"
 #include "worldmap.h"
 #include <setjmp.h>
 
@@ -224,7 +229,7 @@ extern int _TimeOut;
 char* _interpretMangleName(char* s);
 void _interpretOutputFunc(int (*func)(const char*));
 int _interpretOutput(const char* format, ...);
-[[noreturn]] void programFatalError(const char* str, ...);
+void programFatalError(const char* str, ...);
 void programPrintError(const char* format, ...);
 void interpreterStringRefCountDecrease(Program* program, opcode_t opcode, int value);
 void programFree(Program* program);
@@ -262,6 +267,16 @@ void* programStackPopPointer(Program* program);
 template <typename T>
 T programStackPopEnum(Program* program);
 
+inline ProtoId programStackPopProtoId(Program* program)
+{
+    const ProtoId protoId = ProtoId(programStackPopInteger(program));
+    if (protoId.hasPid() && !protoId.valid()) {
+        programPrintError("invalid proto id %d", protoId.pid());
+    }
+
+    return protoId;
+}
+
 template <>
 inline HitMode programStackPopEnum(Program* program)
 {
@@ -282,6 +297,17 @@ inline HitLocation programStackPopEnum(Program* program)
     }
 
     return static_cast<HitLocation>(hitLocation);
+}
+
+template <>
+inline MapElevation programStackPopEnum(Program* program)
+{
+    int elevation = programStackPopInteger(program);
+    if (!elevationIsValid(elevation)) {
+        programPrintError("invalid elevation %d", elevation);
+    }
+
+    return static_cast<MapElevation>(elevation);
 }
 
 template <>
@@ -384,6 +410,17 @@ inline WeaponAnimation programStackPopEnum(Program* program)
 }
 
 template <>
+inline CharacterSoundEffect programStackPopEnum(Program* program)
+{
+    int soundEffect = programStackPopInteger(program);
+    if (!characterSoundEffectIsValid(soundEffect)) {
+        programPrintError("invalid character sound effect %d", soundEffect);
+    }
+
+    return static_cast<CharacterSoundEffect>(soundEffect);
+}
+
+template <>
 inline Rotation programStackPopEnum(Program* program)
 {
     int rotation = programStackPopInteger(program);
@@ -427,6 +464,83 @@ inline VisitedState programStackPopEnum(Program* program)
     }
 
     return static_cast<VisitedState>(visited);
+}
+
+template <>
+inline TextAlignment programStackPopEnum(Program* program)
+{
+    int textAlignment = programStackPopInteger(program);
+    if (!textAlignmentIsValid(textAlignment)) {
+        programPrintError("invalid text alignment %d", textAlignment);
+    }
+
+    return static_cast<TextAlignment>(textAlignment);
+}
+
+template <>
+inline WeaponSoundEffect programStackPopEnum(Program* program)
+{
+    int weaponSoundEffect = programStackPopInteger(program);
+    if (!weaponSoundEffectIsValid(weaponSoundEffect)) {
+        programPrintError("invalid weapon sound effect %d", weaponSoundEffect);
+    }
+
+    return static_cast<WeaponSoundEffect>(weaponSoundEffect);
+}
+
+template <>
+inline ScenerySoundEffect programStackPopEnum(Program* program)
+{
+    int scenerySoundEffect = programStackPopInteger(program);
+    if (!scenerySoundEffectIsValid(scenerySoundEffect)) {
+        programPrintError("invalid scenery sound effect %d", scenerySoundEffect);
+    }
+
+    return static_cast<ScenerySoundEffect>(scenerySoundEffect);
+}
+
+template <>
+inline SoundEffectActionType programStackPopEnum(Program* program)
+{
+    int actionType = programStackPopInteger(program);
+    if (!soundEffectActionTypeIsValid(actionType)) {
+        programPrintError("invalid sound effect action type %d", actionType);
+    }
+
+    return static_cast<SoundEffectActionType>(actionType);
+}
+
+template <>
+inline GameMovie programStackPopEnum(Program* program)
+{
+    int movie = programStackPopInteger(program);
+    if (!gameMovieExtendedIsValid(movie)) {
+        programPrintError("invalid movie %d", movie);
+    }
+
+    return static_cast<GameMovie>(movie);
+}
+
+template <>
+inline Roll programStackPopEnum(Program* program)
+{
+    int roll = programStackPopInteger(program);
+    if (!rollIsValid(roll)) {
+        programPrintError("invalid roll %d", roll);
+    }
+
+    return static_cast<Roll>(roll);
+}
+
+template <>
+inline ListType programStackPopEnum(Program* program)
+{
+    int listType = programStackPopInteger(program);
+    if (!listTypeIsValid(listType)) {
+        programPrintError("invalid list type %d", listType);
+    }
+
+    return static_cast<ListType>(listType);
 }
 
 void programReturnStackPushValue(Program* program, ProgramValue& programValue);

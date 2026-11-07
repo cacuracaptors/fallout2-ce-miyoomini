@@ -76,6 +76,10 @@ static int mapHeaderRead(MapHeader* ptr, File* stream);
 static void mapLoadTimerStart();
 static void mapLoadTimerFinish(const char* fileName, int rc);
 
+// Also covers the synchronous explosion pre-pass, as in sfall's OnMapLeave.
+static bool exitScriptsRunning = false;
+static bool restoreSneakOnMapEnter = false;
+
 // 0x50B058
 static char byte_50B058[] = "";
 
@@ -99,7 +103,7 @@ static unsigned int gIsoWindowScrollTimestamp = 0;
 static bool gIsoEnabled = false;
 
 // 0x519558 mapEntranceElevation
-static int gEnteringElevation = 0;
+static MapElevation gEnteringElevation = ELEVATION_FIRST;
 
 // 0x51955C mapEntranceTileNum
 static int gEnteringTile = -1;
@@ -129,7 +133,7 @@ int gMapGlobalVarsLength = 0;
 // Current elevation.
 //
 // 0x519578 map_elevation
-int gElevation = 0;
+MapElevation gElevation = ELEVATION_FIRST;
 
 // 0x51957C errMapName
 static char* _errMapName = byte_50B058;
@@ -192,7 +196,7 @@ int isoInit()
     // NOTE: Uninline.
     square_init();
 
-    gIsoWindow = windowCreate(0, 0, screenGetWidth(), screenGetVisibleHeight(), static_cast<ColorWithFlags>(256), 10);
+    gIsoWindow = windowCreate(0, 0, screenGetWidth(), screenGetVisibleHeight(), static_cast<ColorWithFlags>(256), WINDOW_HIDDEN | WINDOW_DONT_MOVE_TOP);
     if (gIsoWindow == -1) {
         debugPrint("win_add failed in iso_init\n");
         return -1;
@@ -253,7 +257,7 @@ int isoInit()
     mapMakeMapsDirectory();
 
     // NOTE: Uninline.
-    mapSetEnteringLocation(-1, -1, ROTATION_INVALID);
+    mapSetEnteringLocation(ELEVATION_INVALID, -1, ROTATION_INVALID);
 
     return 0;
 }
@@ -261,6 +265,9 @@ int isoInit()
 // 0x481ED4
 void isoReset()
 {
+    exitScriptsRunning = false;
+    restoreSneakOnMapEnter = false;
+
     // NOTE: Uninline.
     mapGlobalVariablesFree();
 
@@ -274,7 +281,7 @@ void isoReset()
     interfaceReset();
 
     // NOTE: Uninline.
-    mapSetEnteringLocation(-1, -1, ROTATION_INVALID);
+    mapSetEnteringLocation(ELEVATION_INVALID, -1, ROTATION_INVALID);
 }
 
 // 0x481F48
@@ -298,6 +305,9 @@ void isoExit()
 // 0x481FB4
 void mapInit()
 {
+    exitScriptsRunning = false;
+    restoreSneakOnMapEnter = false;
+
     configGetBool(&gContentConfig, CONTENT_CONFIG_MAPS_SECTION, "disable_special_map_ids", &disableSpecialMapIds, false);
 
     if (settings.system.executableIsMapper()) {
@@ -306,7 +316,7 @@ void mapInit()
 
     if (messageListInit(&gMapMessageList)) {
         char path[COMPAT_MAX_PATH];
-        snprintf(path, sizeof(path), "%smap.msg", asc_5186C8);
+        snprintf(path, sizeof(path), "%smap.msg", gGameMsgPath);
 
         if (!messageListLoad(&gMapMessageList, path)) {
             debugPrint("\nError loading map_msg_file!");
@@ -376,7 +386,7 @@ bool isoIsDisabled()
 }
 
 // 0x482158 map_set_elevation
-int mapSetElevation(int elevation)
+int mapSetElevation(MapElevation elevation)
 {
     if (!elevationIsValid(elevation)) {
         return -1;
@@ -396,7 +406,7 @@ int mapSetElevation(int elevation)
     gElevation = elevation;
 
     reg_anim_clear(gDude);
-    _dude_stand(gDude, gDude->rotation, FrmId(gDude->fid));
+    _dude_stand(gDude, gDude->rotation, FrmId(gDude));
     _partyMemberSyncPosition();
 
     if (gMapSid != -1) {
@@ -512,7 +522,7 @@ int mapAllocLocalVars(const int numNewVars)
 }
 
 // 0x48234C
-void mapSetStart(int tile, int elevation, Rotation rotation)
+void mapSetStart(int tile, MapElevation elevation, Rotation rotation)
 {
     gMapHeader.enteringTile = tile;
     gMapHeader.enteringElevation = elevation;
@@ -520,7 +530,7 @@ void mapSetStart(int tile, int elevation, Rotation rotation)
 }
 
 // 0x4824CC
-char* mapGetName(Map map, int elevation)
+char* mapGetName(Map map, MapElevation elevation)
 {
     if (!mapIsValid(map)) {
         return nullptr;
@@ -769,7 +779,7 @@ const char* mapBuildSavePath(const char* name)
 }
 
 // 0x482924
-int mapSetEnteringLocation(int elevation, int tile_num, Rotation rotation)
+int mapSetEnteringLocation(MapElevation elevation, int tile_num, Rotation rotation)
 {
     gEnteringElevation = elevation;
     gEnteringTile = tile_num;
@@ -781,10 +791,10 @@ int mapSetEnteringLocation(int elevation, int tile_num, Rotation rotation)
 void mapNewMap()
 {
     mapEdgeFree();
-    mapSetElevation(0);
+    mapSetElevation(ELEVATION_FIRST);
     tileSetCenter(20100, TILE_SET_CENTER_FLAG_IGNORE_SCROLL_RESTRICTIONS);
     memset(&gMapTransition, 0, sizeof(gMapTransition));
-    gMapHeader.enteringElevation = 0;
+    gMapHeader.enteringElevation = ELEVATION_FIRST;
     gMapHeader.enteringRotation = ROTATION_NE;
     gMapHeader.localVariablesCount = 0;
     gMapHeader.version = 20;
@@ -916,7 +926,7 @@ static int mapLoad(File* stream)
     _partyMemberPrepLoad();
     _gmouse_disable_scrolling();
 
-    int savedMouseCursorId = gameMouseGetCursor();
+    MouseCursorType savedMouseCursorId = gameMouseGetCursor();
     if (savedMouseCursorId >= MOUSE_CURSOR_SCROLL_NW && savedMouseCursorId <= MOUSE_CURSOR_SCROLL_W_INVALID) {
         savedMouseCursorId = MOUSE_CURSOR_ARROW; // reset if it was in view scrolling mode
     }
@@ -1063,9 +1073,9 @@ static int mapLoad(File* stream)
         }
 
         Object* object;
-        objectCreateWithFrmIdPid(&object, MiscFrameId::ScrollBlocker, -1);
+        objectCreateWithFrmIdProtoId(&object, MiscFrameId::ScrollBlocker, ProtoId::Empty());
         object->flags |= (OBJECT_LIGHT_THRU | OBJECT_NO_SAVE | OBJECT_HIDDEN);
-        objectSetLocation(object, 1, 0, nullptr);
+        objectSetLocation(object, 1, ELEVATION_FIRST, nullptr);
         object->sid = gMapSid;
         scriptSetFixedParam(gMapSid, (gMapHeader.flags & MAP_HEADER_SAVED) == MAP_HEADER_NONE);
 
@@ -1115,6 +1125,11 @@ err:
         debugPrint("\n   Error: scr_load_all_scripts failed!");
     }
 
+    if (restoreSneakOnMapEnter) {
+        // Consume before enabling sneak, which also schedules its new timer.
+        restoreSneakOnMapEnter = false;
+        dudeEnableState(DUDE_STATE_SNEAKING);
+    }
     scriptsExecMapEnterProc();
     scriptsExecMapUpdateProc();
     tileEnable();
@@ -1149,7 +1164,7 @@ err:
     gameMouseSetCursor(savedMouseCursorId);
 
     // NOTE: Uninline.
-    mapSetEnteringLocation(-1, -1, ROTATION_INVALID);
+    mapSetEnteringLocation(ELEVATION_INVALID, -1, ROTATION_INVALID);
 
     tile_hires_stencil_on_map_load();
 
@@ -1180,9 +1195,11 @@ int mapLoadSaved(char* fileName)
             objectUnjamAll();
         }
 
+        // NOTE: The original fails the load here, and `mapLoadByName` loads
+        // the .MAP instead: the map as new. The saved map loads, the bodies
+        // the aging couldn't replace stay for the next visit.
         if (_map_age_dead_critters() == -1) {
             debugPrint("\nError: Critter aging failed on map load!");
-            return -1;
         }
     }
 
@@ -1205,9 +1222,10 @@ int mapLoadSaved(char* fileName)
 // 0x48328C
 static int _map_age_dead_critters()
 {
-    if (!wmMapDeadBodiesAge()) {
-        return 0;
-    }
+    // SFALL: Fix for critters not being healed over time when entering a map
+    // with 'dead_bodies_age=No' set in maps.txt: the setting keeps the dead
+    // bodies, the living critters still heal (see below).
+    bool deadBodiesAge = wmMapDeadBodiesAge();
 
     int hoursSinceLastVisit = (gameTimeGetTime() - gMapHeader.lastVisitTime) / GAME_TIME_TICKS_PER_HOUR;
     if (hoursSinceLastVisit == 0) {
@@ -1216,22 +1234,29 @@ static int _map_age_dead_critters()
 
     Object* obj = objectFindFirst();
     while (obj != nullptr) {
-        if (objectTypeFromPid(obj->pid) == OBJ_TYPE_CRITTER
+        const ProtoId protoId = obj;
+        if (protoId.objectType() == OBJ_TYPE_CRITTER
             && obj != gDude
             && !objectIsPartyMember(obj)
             && !critterIsDead(obj)) {
             obj->data.critter.combat.maneuver &= ~CRITTER_MANUEVER_FLEEING;
-            if (critterGetKillType(obj) != KILL_TYPE_ROBOT && !critterFlagCheck(obj->pid, CRITTER_NO_HEAL)) {
+            if (critterGetKillType(obj) != KILL_TYPE_ROBOT && !critterFlagCheck(protoId, CRITTER_NO_HEAL)) {
                 critterHealByHours(obj, hoursSinceLastVisit);
             }
         }
         obj = objectFindNext();
     }
 
+    if (!deadBodiesAge) {
+        return 0;
+    }
+
+    // NOTE: The original (0x483334) replaces dead bodies by blood stains
+    // after 6 days and also removes the blood stains after 14 days.
     int agingType;
-    if (hoursSinceLastVisit > 21 * 24) {
+    if (hoursSinceLastVisit > 14 * 24) {
         agingType = 2;
-    } else if (hoursSinceLastVisit > 14 * 24) {
+    } else if (hoursSinceLastVisit > 6 * 24) {
         agingType = 1;
     } else {
         return 0;
@@ -1243,10 +1268,10 @@ static int _map_age_dead_critters()
 
     obj = objectFindFirst();
     while (obj != nullptr) {
-        ObjectType type = objectTypeFromPid(obj->pid);
-        if (type == OBJ_TYPE_CRITTER) {
+        const ProtoId protoId = obj;
+        if (protoId.objectType() == OBJ_TYPE_CRITTER) {
             if (obj != gDude && critterIsDead(obj)) {
-                if (critterGetKillType(obj) != KILL_TYPE_ROBOT && !critterFlagCheck(obj->pid, CRITTER_NO_AGE)) {
+                if (critterGetKillType(obj) != KILL_TYPE_ROBOT && !critterFlagCheck(protoId, CRITTER_NO_AGE)) {
                     objects[count++] = obj;
 
                     if (count >= capacity) {
@@ -1259,7 +1284,7 @@ static int _map_age_dead_critters()
                     }
                 }
             }
-        } else if (agingType == 2 && type == OBJ_TYPE_MISC && obj->fid == 0x500000B) {
+        } else if (agingType == 2 && protoId.objectType() == OBJ_TYPE_MISC && FrmId(obj) == MiscFrameId::BloodPool) {
             objects[count++] = obj;
             if (count >= capacity) {
                 capacity *= 2;
@@ -1276,7 +1301,8 @@ static int _map_age_dead_critters()
     int rc = 0;
     for (int index = 0; index < count; index++) {
         Object* obj = objects[index];
-        if (objectTypeFromPid(obj->pid) == OBJ_TYPE_CRITTER) {
+        const ProtoId protoId = obj;
+        if (protoId.objectType() == OBJ_TYPE_CRITTER) {
             // replace the dead critter bodies by the blood pool stain
             if (replaceDeadCritter(obj) == -1) {
                 debugPrint("\n%s: Could not replace dead body by the blood stain for the critter %d with pid %d.", __func__, obj->id, obj->pid);
@@ -1285,7 +1311,7 @@ static int _map_age_dead_critters()
             }
 
             // drop the critter owned items on top of the blood stain only when successfully replaced
-            if (!critterFlagCheck(obj->pid, CRITTER_NO_DROP)) {
+            if (!critterFlagCheck(protoId, CRITTER_NO_DROP)) {
                 itemDropAll(obj, obj->tile);
             }
         }
@@ -1301,12 +1327,12 @@ static int _map_age_dead_critters()
 
 static int replaceDeadCritter(Object* critter)
 {
-    if (objectTypeFromPid(critter->pid) != OBJ_TYPE_CRITTER) {
+    if (ProtoId(critter).objectType() != OBJ_TYPE_CRITTER) {
         return -1;
     }
 
     Object* blood;
-    if (objectCreateWithPid(&blood, PROTO_ID_BLOOD) == -1) {
+    if (objectCreateWithProtoId(&blood, MiscProtoTypeId::Blood) == -1) {
         return -1;
     }
 
@@ -1324,7 +1350,13 @@ static int replaceDeadCritter(Object* critter)
         }
     }
 
-    return objectSetFrame(blood, frame, nullptr);
+    // NOTE: The original (0x483545) ignores obj_set_frame's result. A multihex
+    // body's frame (6 to 9) can be past the stain art's last one (8), then the
+    // stain keeps its first frame. Failing here failed the critter aging, and
+    // with it the saved map's load: the map was loaded as new.
+    objectSetFrame(blood, frame, nullptr);
+
+    return 0;
 }
 
 // 0x48358C
@@ -1423,11 +1455,7 @@ int mapHandleTransition()
 static void _map_fix_critter_combat_data()
 {
     for (Object* object = objectFindFirst(); object != nullptr; object = objectFindNext()) {
-        if (object->pid == -1) {
-            continue;
-        }
-
-        if (objectTypeFromPid(object->pid) != OBJ_TYPE_CRITTER) {
+        if (ProtoId(object).objectType() != OBJ_TYPE_CRITTER) {
             continue;
         }
 
@@ -1476,18 +1504,18 @@ static int _map_save_file(File* stream)
 
     scriptsDisable();
 
-    for (int elevation = 0; elevation < ELEVATION_COUNT; elevation++) {
+    for (MapElevation elevation = ELEVATION_FIRST; elevation < ELEVATION_COUNT; elevation++) {
         int tile;
         for (tile = 0; tile < SQUARE_GRID_SIZE; tile++) {
-            TileFrmId frmId;
+            TileFrameId frameId;
 
-            frmId = static_cast<TileFrameId>(frameIdFromFid(_square[elevation]->fid[tile]));
-            if (frmId != TileFrameId::Grid) {
+            frameId = FloorTileFrmId(_square[elevation]->tileFid[tile]).frameId<TileFrameId>();
+            if (frameId != TileFrameId::Grid) {
                 break;
             }
 
-            frmId = static_cast<TileFrameId>(frameIdFromFid(_square[elevation]->fid[tile] >> 16));
-            if (frmId != TileFrameId::Grid) {
+            frameId = RoofTileFrmId(_square[elevation]->tileFid[tile]).frameId<TileFrameId>();
+            if (frameId != TileFrameId::Grid) {
                 break;
             }
         }
@@ -1527,9 +1555,9 @@ static int _map_save_file(File* stream)
         fileWriteInt32List(stream, gMapLocalVars, gMapHeader.localVariablesCount);
     }
 
-    for (int elevation = 0; elevation < ELEVATION_COUNT; elevation++) {
+    for (MapElevation elevation = ELEVATION_FIRST; elevation < ELEVATION_COUNT; elevation++) {
         if ((gMapHeader.flags & _map_data_elev_flags[elevation]) == MAP_HEADER_NONE) {
-            _db_fwriteLongCount(stream, _square[elevation]->fid, SQUARE_GRID_SIZE);
+            _db_fwriteLongCount(stream, _square[elevation]->tileFid, SQUARE_GRID_SIZE);
         }
     }
 
@@ -1550,6 +1578,11 @@ static int _map_save_file(File* stream)
     return 0;
 }
 
+bool mapExitScriptsRunning()
+{
+    return exitScriptsRunning;
+}
+
 // 0x483C98
 int _map_save_in_game(bool isLeavingMap)
 {
@@ -1558,13 +1591,24 @@ int _map_save_in_game(bool isLeavingMap)
     }
 
     animationStop();
+
+    if (isLeavingMap) {
+        // SFALL: Run exit scripts before event cleanup and party preparation so
+        // scripts can still add or remove party members and update their state.
+        exitScriptsRunning = true;
+        queueClearMapExitExplosions();
+        scriptsExecMapExitProc();
+        // SFALL: Capture after exit scripts, before cleanup disables sneaking.
+        restoreSneakOnMapEnter = dudeHasState(DUDE_STATE_SNEAKING);
+        exitScriptsRunning = false;
+        _queue_leaving_map();
+    }
+
     _partyMemberSaveProtos();
 
     if (isLeavingMap) {
-        _queue_leaving_map();
         _partyMemberPrepLoad();
         _partyMemberPrepItemSaveAll();
-        scriptsExecMapExitProc();
 
         if (gMapSid != -1) {
             Script* script;
@@ -1793,9 +1837,9 @@ static void _map_place_dude_and_mouse()
     _obj_clear_seen();
 
     if (gDude != nullptr) {
-        if (animationTypeFromFid(gDude->fid) != ANIM_STAND) {
+        if (FrmId(gDude).animationType() != ANIM_STAND) {
             objectSetFrame(gDude, 0, nullptr);
-            gDude->fid = FrmId(gDude, ANIM_STAND, weaponAnimationFromFid(gDude->fid), gDude->rotation + 1).fid();
+            gDude->fid = FrmId(gDude, ANIM_STAND, gDude->rotation + 1).fid();
         }
 
         if (gDude->tile == -1) {
@@ -1806,7 +1850,7 @@ static void _map_place_dude_and_mouse()
         objectSetLight(gDude, 4, 0x10000, nullptr);
         gDude->flags |= OBJECT_NO_SAVE;
 
-        _dude_stand(gDude, gDude->rotation, FrmId(gDude->fid));
+        _dude_stand(gDude, gDude->rotation, FrmId(gDude));
         _partyMemberSyncPosition();
     }
 
@@ -1819,7 +1863,7 @@ static void _map_place_dude_and_mouse()
 // 0x4841F0
 static void square_init()
 {
-    for (int elevation = 0; elevation < ELEVATION_COUNT; elevation++) {
+    for (MapElevation elevation = ELEVATION_FIRST; elevation < ELEVATION_COUNT; elevation++) {
         _square[elevation] = &(_square_data[elevation]);
     }
 }
@@ -1827,25 +1871,22 @@ static void square_init()
 // 0x484210
 static void _square_reset()
 {
-    constexpr int kGridFrameId = static_cast<int>(TileFrameId::Grid);
-
-    for (int elevation = 0; elevation < ELEVATION_COUNT; elevation++) {
-        int* p = _square[elevation]->fid;
+    for (MapElevation elevation = ELEVATION_FIRST; elevation < ELEVATION_COUNT; elevation++) {
+        int* p = _square[elevation]->tileFid;
         for (int y = 0; y < SQUARE_GRID_HEIGHT; y++) {
             for (int x = 0; x < SQUARE_GRID_WIDTH; x++) {
-                // TODO: Strange math, initially right, but need to figure it out and
-                // check subsequent calls.
                 int fid = *p;
-                fid &= ~0xFFFF;
-                *p = ((kGridFrameId | (((fid >> 16) & 0xF000) >> 12)) << 16) | (fid & 0xFFFF);
+                const FloorTileFrmId originalFloorTileFrmId = FloorTileFrmId(fid);
+                const RoofTileFrmId originalRoofTileFrmId = RoofTileFrmId(fid);
+                const TileFrmId updatedTileFrmId = TileFrmId(
+                    FloorTileFrmId(
+                        TileFrameId::Grid,
+                        originalFloorTileFrmId.flags()),
+                    RoofTileFrmId(
+                        TileFrameId::Grid,
+                        originalRoofTileFrmId.flags()));
 
-                fid = *p;
-                int tileFlags = (fid & 0xF000) >> 12;
-                int updatedLowerTile = kGridFrameId | tileFlags;
-
-                fid &= ~0xFFFF;
-
-                *p = updatedLowerTile | ((fid >> 16) << 16);
+                *p = updatedTileFrmId.fid();
 
                 p++;
             }
@@ -1856,31 +1897,28 @@ static void _square_reset()
 // 0x48431C
 static int _square_load(File* stream, MapHeaderFlags flags)
 {
-    int upperTileWord;
-    int upperTileFlags;
-    int upperTileArtId;
-    int lowerTileWord;
-
     _square_reset();
 
-    for (int elevation = 0; elevation < ELEVATION_COUNT; elevation++) {
+    for (MapElevation elevation = ELEVATION_FIRST; elevation < ELEVATION_COUNT; elevation++) {
         if ((flags & _map_data_elev_flags[elevation]) == MAP_HEADER_NONE) {
-            int* arr = _square[elevation]->fid;
-            if (_db_freadIntCount(stream, arr, SQUARE_GRID_SIZE) != 0) {
+            int* tileFids = _square[elevation]->tileFid;
+            if (_db_freadIntCount(stream, tileFids, SQUARE_GRID_SIZE) != 0) {
                 return -1;
             }
 
             for (int tile = 0; tile < SQUARE_GRID_SIZE; tile++) {
-                upperTileWord = arr[tile];
-                upperTileWord &= ~(0xFFFF);
-                upperTileWord >>= 16;
+                const RoofTileFrmId roofTileFrmId = RoofTileFrmId(tileFids[tile]);
 
-                upperTileFlags = (upperTileWord & 0xF000) >> 12;
-                upperTileFlags &= ~(0x01);
+                TileFlags roofTileFlags = roofTileFrmId.flags() & ~TileFlags::TemporarilyHidden;
 
-                upperTileArtId = frameIdFromFid(upperTileWord);
-                lowerTileWord = arr[tile] & 0xFFFF;
-                arr[tile] = ((upperTileArtId | (upperTileFlags << 12)) << 16) | lowerTileWord;
+                TileFrameId roofTileArtId = roofTileFrmId.frameId<TileFrameId>();
+                if (roofTileArtId == TileFrameId::Invalid) {
+                    roofTileArtId = TileFrameId::Last;
+                }
+
+                const FloorTileFrmId floorTileFrmId = FloorTileFrmId(tileFids[tile]);
+                const TileFrmId updatedTileFrmId = TileFrmId(floorTileFrmId, RoofTileFrmId(roofTileArtId, roofTileFlags));
+                tileFids[tile] = updatedTileFrmId.fid();
             }
         }
     }
@@ -1894,7 +1932,7 @@ static int mapHeaderWrite(MapHeader* ptr, File* stream)
     if (fileWriteInt32(stream, ptr->version) == -1) return -1;
     if (fileWriteFixedLengthString(stream, ptr->name, 16) == -1) return -1;
     if (fileWriteInt32(stream, ptr->enteringTile) == -1) return -1;
-    if (fileWriteInt32(stream, ptr->enteringElevation) == -1) return -1;
+    if (fileWriteInt32Enum<MapElevation>(stream, ptr->enteringElevation) == -1) return -1;
     if (fileWriteInt32Enum<Rotation>(stream, ptr->enteringRotation) == -1) return -1;
     if (fileWriteInt32(stream, ptr->localVariablesCount) == -1) return -1;
     if (fileWriteInt32(stream, ptr->scriptIndex) == -1) return -1;
@@ -1914,7 +1952,7 @@ static int mapHeaderRead(MapHeader* ptr, File* stream)
     if (fileReadInt32(stream, &(ptr->version)) == -1) return -1;
     if (fileReadFixedLengthString(stream, ptr->name, 16) == -1) return -1;
     if (fileReadInt32(stream, &(ptr->enteringTile)) == -1) return -1;
-    if (fileReadInt32(stream, &(ptr->enteringElevation)) == -1) return -1;
+    if (fileReadInt32Enum<MapElevation>(stream, &(ptr->enteringElevation)) == -1) return -1;
     if (fileReadInt32Enum<Rotation>(stream, &(ptr->enteringRotation)) == -1) return -1;
     if (fileReadInt32(stream, &(ptr->localVariablesCount)) == -1) return -1;
     if (fileReadInt32(stream, &(ptr->scriptIndex)) == -1) return -1;

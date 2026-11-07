@@ -1,6 +1,7 @@
 #include "sfall_opcodes.h"
 
 #include <algorithm>
+#include <cstring>
 #include <math.h>
 #include <string.h>
 
@@ -172,6 +173,13 @@ static void op_set_skill_max(Program* program)
     skillSetMaximum(programStackPopInteger(program));
 }
 
+// eax_available
+// NOTE: Deprecated in sfall (EAX is not supported); always returns 0.
+static void op_eax_available(Program* program)
+{
+    programStackPushInteger(program, 0);
+}
+
 static void op_set_stat_max(Program* program)
 {
     int maximum = programStackPopInteger(program);
@@ -269,9 +277,9 @@ static void op_get_year(Program* program)
 
 static void op_set_movie_path(Program* program)
 {
-    int movie = programStackPopInteger(program);
+    GameMovie movie = programStackPopEnum<GameMovie>(program);
     const char* fileName = programStackPopString(program);
-    if (movie < 0 || movie >= GAME_MOVIE_MAX_COUNT || fileName == nullptr) {
+    if (!gameMovieExtendedIsValid(movie) || fileName == nullptr) {
         programPrintError("set_movie_path: invalid argument");
         return;
     }
@@ -288,7 +296,7 @@ static void op_set_movie_path(Program* program)
 
 static void op_mark_movie_played(Program* program)
 {
-    int movie = programStackPopInteger(program);
+    GameMovie movie = programStackPopEnum<GameMovie>(program);
     gameMovieMarkSeen(movie);
 }
 
@@ -297,6 +305,11 @@ static void op_game_loaded(Program* program)
 {
     bool loaded = sfall_gl_scr_is_loaded(program);
     programStackPushInteger(program, loaded ? 1 : 0);
+}
+
+static void op_sneak_success(Program* program)
+{
+    programStackPushInteger(program, dudeIsSneaking() ? 1 : 0);
 }
 
 // set_global_script_repeat
@@ -457,14 +470,15 @@ static void op_set_critter_skill_points(Program* program)
         return;
     }
 
-    if (critter == nullptr || objectTypeFromPid(critter->pid) != OBJ_TYPE_CRITTER) {
+    const ProtoId protoId = critter;
+    if (protoId.objectType() != OBJ_TYPE_CRITTER) {
         programPrintError("set_critter_skill_points: obj is not a critter");
         return;
     }
 
     Proto* proto;
-    if (protoGetProto(critter->pid, &proto) == -1) {
-        programPrintError("set_critter_skill_points: failed to get proto for pid %d", critter->pid);
+    if (protoGetProto(protoId, &proto) == -1) {
+        programPrintError("set_critter_skill_points: failed to get proto for pid %d", protoId.pid());
         return;
     }
 
@@ -482,15 +496,16 @@ static void op_get_critter_skill_points(Program* program)
         return;
     }
 
-    if (critter == nullptr || objectTypeFromPid(critter->pid) != OBJ_TYPE_CRITTER) {
+    const ProtoId protoId = critter;
+    if (protoId.objectType() != OBJ_TYPE_CRITTER) {
         programPrintError("get_critter_skill_points: obj is not a critter");
         programStackPushInteger(program, 0);
         return;
     }
 
     Proto* proto;
-    if (protoGetProto(critter->pid, &proto) == -1) {
-        programPrintError("get_critter_skill_points: failed to get proto for pid %d", critter->pid);
+    if (protoGetProto(protoId, &proto) == -1) {
+        programPrintError("get_critter_skill_points: failed to get proto for pid %d", protoId.pid());
         programStackPushInteger(program, 0);
         return;
     }
@@ -567,7 +582,7 @@ static void op_get_critter_current_ap(Program* program)
     Object* critter = static_cast<Object*>(programStackPopPointer(program));
 
     int actionPoints = 0;
-    if (critter != nullptr && objectTypeFromFid(critter->fid) == OBJ_TYPE_CRITTER) {
+    if (critter != nullptr && FrmId(critter).objectType() == OBJ_TYPE_CRITTER) {
         actionPoints = critter->data.critter.combat.ap;
     }
 
@@ -579,7 +594,7 @@ static void op_set_critter_current_ap(Program* program)
     int actionPoints = programStackPopInteger(program);
     Object* critter = static_cast<Object*>(programStackPopPointer(program));
 
-    if (critter == nullptr || objectTypeFromFid(critter->fid) != OBJ_TYPE_CRITTER) {
+    if (critter == nullptr || FrmId(critter).objectType() != OBJ_TYPE_CRITTER) {
         programPrintError("set_critter_current_ap: expected critter object");
         return;
     }
@@ -599,7 +614,7 @@ static void op_set_critter_burst_disable(Program* program)
     int disable = programStackPopInteger(program);
     Object* critter = static_cast<Object*>(programStackPopPointer(program));
 
-    if (critter == nullptr || objectTypeFromFid(critter->fid) != OBJ_TYPE_CRITTER) {
+    if (critter == nullptr || FrmId(critter).objectType() != OBJ_TYPE_CRITTER) {
         programPrintError("set_critter_burst_disable: expected critter object");
         return;
     }
@@ -664,11 +679,19 @@ static void op_set_sfall_global(Program* program)
     ProgramValue value = programStackPopValue(program);
     ProgramValue variable = programStackPopValue(program);
 
+    int rawValue;
+    if (value.isFloat()) {
+        static_assert(sizeof(rawValue) == sizeof(value.floatValue));
+        std::memcpy(&rawValue, &value.floatValue, sizeof(rawValue));
+    } else {
+        rawValue = value.integerValue;
+    }
+
     if ((variable.opcode & VALUE_TYPE_MASK) == VALUE_TYPE_STRING) {
         const char* key = programGetString(program, variable.opcode, variable.integerValue);
-        sfall_gl_vars_store(key, value.integerValue);
+        sfall_gl_vars_store(key, rawValue);
     } else if (variable.opcode == VALUE_TYPE_INT) {
-        sfall_gl_vars_store(variable.integerValue, value.integerValue);
+        sfall_gl_vars_store(variable.integerValue, rawValue);
     }
 }
 
@@ -686,6 +709,25 @@ static void op_get_sfall_global_int(Program* program)
     }
 
     programStackPushInteger(program, value);
+}
+
+// get_sfall_global_float
+static void op_get_sfall_global_float(Program* program)
+{
+    ProgramValue variable = programStackPopValue(program);
+
+    int rawValue = 0;
+    if ((variable.opcode & VALUE_TYPE_MASK) == VALUE_TYPE_STRING) {
+        const char* key = programGetString(program, variable.opcode, variable.integerValue);
+        sfall_gl_vars_fetch(key, rawValue);
+    } else if (variable.opcode == VALUE_TYPE_INT) {
+        sfall_gl_vars_fetch(variable.integerValue, rawValue);
+    }
+
+    float value;
+    static_assert(sizeof(value) == sizeof(rawValue));
+    std::memcpy(&value, &rawValue, sizeof(value));
+    programStackPushFloat(program, value);
 }
 
 // get_game_mode
@@ -933,7 +975,7 @@ static void op_set_script(Program* program)
         obj->scriptIndex = -1;
     }
 
-    int scriptType = (objectTypeFromPid(obj->pid) == OBJ_TYPE_CRITTER) ? SCRIPT_TYPE_CRITTER : SCRIPT_TYPE_ITEM;
+    ScriptType scriptType = (ProtoId(obj).objectType() == OBJ_TYPE_CRITTER) ? SCRIPT_TYPE_CRITTER : SCRIPT_TYPE_ITEM;
     if (objectSetScript(obj, scriptType, scriptIndex) == -1) {
         obj->sid = -1;
         obj->scriptIndex = -1;
@@ -963,11 +1005,11 @@ static void op_set_script(Program* program)
 static void op_get_proto_data(Program* program)
 {
     int rawOffset = programStackPopInteger(program);
-    int pid = programStackPopInteger(program);
+    const ProtoId protoId = programStackPopProtoId(program);
 
     Proto* proto;
-    if (protoGetProto(pid, &proto) != 0) {
-        programPrintError("get_proto_data: bad proto %d", pid);
+    if (protoGetProto(protoId, &proto) != 0) {
+        programPrintError("get_proto_data: bad proto %d", protoId.pid());
         programStackPushInteger(program, -1);
         return;
     }
@@ -981,7 +1023,7 @@ static void op_get_proto_data(Program* program)
     }
 
     size_t offset = static_cast<size_t>(rawOffset);
-    size_t size = proto_size(objectTypeFromPid(pid));
+    size_t size = proto_size(protoId.objectType());
     if (offset > size || size - offset < sizeof(int)) {
         programPrintError("get_proto_data: bad offset %zu", offset);
         programStackPushInteger(program, -1);
@@ -997,11 +1039,11 @@ static void op_set_proto_data(Program* program)
 {
     int value = programStackPopInteger(program);
     int rawOffset = programStackPopInteger(program);
-    int pid = programStackPopInteger(program);
+    const ProtoId protoId = programStackPopProtoId(program);
 
     Proto* proto;
-    if (protoGetProto(pid, &proto) != 0) {
-        programPrintError("set_proto_data: bad proto %d", pid);
+    if (protoGetProto(protoId, &proto) != 0) {
+        programPrintError("set_proto_data: bad proto %d", protoId.pid());
         return;
     }
 
@@ -1013,7 +1055,7 @@ static void op_set_proto_data(Program* program)
     }
 
     size_t offset = static_cast<size_t>(rawOffset);
-    size_t size = proto_size(objectTypeFromPid(pid));
+    size_t size = proto_size(protoId.objectType());
     if (offset > size || size - offset < sizeof(int)) {
         programPrintError("set_proto_data: bad offset %zu", offset);
         return;
@@ -1033,7 +1075,7 @@ static void op_set_self(Program* program)
 // list_begin
 static void op_list_begin(Program* program)
 {
-    int listType = programStackPopInteger(program);
+    ListType listType = programStackPopEnum<ListType>(program);
     int listId = sfallListsCreate(listType);
     programStackPushInteger(program, listId);
 }
@@ -1076,23 +1118,21 @@ static void op_get_weapon_ammo_pid(Program* program)
 {
     Object* obj = static_cast<Object*>(programStackPopPointer(program));
 
-    int pid = -1;
-    if (obj != nullptr) {
-        if (objectTypeFromPid(obj->pid) == OBJ_TYPE_ITEM) {
-            switch (itemGetType(obj)) {
-            case ITEM_TYPE_WEAPON:
-                pid = weaponGetAmmoTypePid(obj);
-                break;
-            case ITEM_TYPE_MISC:
-                pid = miscItemGetPowerTypePid(obj);
-                break;
-            default:
-                break;
-            }
+    ProtoId protoId = ProtoId::Empty();
+    if (ProtoId(obj).objectType() == OBJ_TYPE_ITEM) {
+        switch (itemGetType(obj)) {
+        case ITEM_TYPE_WEAPON:
+            protoId = weaponGetAmmoTypeProtoId(obj);
+            break;
+        case ITEM_TYPE_MISC:
+            protoId = miscItemGetPowerTypeProtoId(obj);
+            break;
+        default:
+            break;
         }
     }
 
-    programStackPushInteger(program, pid);
+    programStackPushInteger(program, protoId.pid());
 }
 
 // There are two problems with this function.
@@ -1105,18 +1145,16 @@ static void op_get_weapon_ammo_pid(Program* program)
 // set_weapon_ammo_pid
 static void op_set_weapon_ammo_pid(Program* program)
 {
-    int ammoTypePid = programStackPopInteger(program);
+    const ProtoId ammoTypeProtoId = programStackPopProtoId(program);
     Object* obj = static_cast<Object*>(programStackPopPointer(program));
 
-    if (obj != nullptr) {
-        if (objectTypeFromPid(obj->pid) == OBJ_TYPE_ITEM) {
-            switch (itemGetType(obj)) {
-            case ITEM_TYPE_WEAPON:
-                obj->data.item.weapon.ammoTypePid = ammoTypePid;
-                break;
-            default:
-                break;
-            }
+    if (ProtoId(obj).objectType() == OBJ_TYPE_ITEM) {
+        switch (itemGetType(obj)) {
+        case ITEM_TYPE_WEAPON:
+            obj->data.item.weapon.ammoTypePid = ammoTypeProtoId.pid();
+            break;
+        default:
+            break;
         }
     }
 }
@@ -1128,19 +1166,17 @@ static void op_get_weapon_ammo_count(Program* program)
 
     // CE: Implementation is different.
     int ammoQuantityOrCharges = 0;
-    if (obj != nullptr) {
-        if (objectTypeFromPid(obj->pid) == OBJ_TYPE_ITEM) {
-            switch (itemGetType(obj)) {
-            case ITEM_TYPE_AMMO:
-            case ITEM_TYPE_WEAPON:
-                ammoQuantityOrCharges = ammoGetQuantity(obj);
-                break;
-            case ITEM_TYPE_MISC:
-                ammoQuantityOrCharges = miscItemGetCharges(obj);
-                break;
-            default:
-                break;
-            }
+    if (ProtoId(obj).objectType() == OBJ_TYPE_ITEM) {
+        switch (itemGetType(obj)) {
+        case ITEM_TYPE_AMMO:
+        case ITEM_TYPE_WEAPON:
+            ammoQuantityOrCharges = ammoGetQuantity(obj);
+            break;
+        case ITEM_TYPE_MISC:
+            ammoQuantityOrCharges = miscItemGetCharges(obj);
+            break;
+        default:
+            break;
         }
     }
 
@@ -1154,19 +1190,17 @@ static void op_set_weapon_ammo_count(Program* program)
     Object* obj = static_cast<Object*>(programStackPopPointer(program));
 
     // CE: Implementation is different.
-    if (obj != nullptr) {
-        if (objectTypeFromPid(obj->pid) == OBJ_TYPE_ITEM) {
-            switch (itemGetType(obj)) {
-            case ITEM_TYPE_AMMO:
-            case ITEM_TYPE_WEAPON:
-                ammoSetQuantity(obj, ammoQuantityOrCharges);
-                break;
-            case ITEM_TYPE_MISC:
-                miscItemSetCharges(obj, ammoQuantityOrCharges);
-                break;
-            default:
-                break;
-            }
+    if (ProtoId(obj).objectType() == OBJ_TYPE_ITEM) {
+        switch (itemGetType(obj)) {
+        case ITEM_TYPE_AMMO:
+        case ITEM_TYPE_WEAPON:
+            ammoSetQuantity(obj, ammoQuantityOrCharges);
+            break;
+        case ITEM_TYPE_MISC:
+            miscItemSetCharges(obj, ammoQuantityOrCharges);
+            break;
+        default:
+            break;
         }
     }
 }
@@ -1194,7 +1228,7 @@ static void op_get_mouse_buttons(Program* program)
 {
     // CE: Implementation is slightly different - it does not handle middle
     // mouse button.
-    programStackPushInteger(program, mouse_get_last_buttons());
+    programStackPushInteger(program, static_cast<int>(mouse_get_last_buttons()));
 }
 
 static void op_get_window_under_mouse(Program* program)
@@ -1230,13 +1264,14 @@ static void op_refresh_pc_art(Program* program)
     Rect rect;
     objectGetRect(gDude, &rect);
 
-    AnimationType anim = animationTypeFromFid(gDude->fid);
-    Rotation rotation = rotationFromFid(gDude->fid);
+    const FrmId dudeFrmId = FrmId(gDude);
+    AnimationType anim = dudeFrmId.animationType();
+    Rotation rotation = dudeFrmId.rotation();
 
     _proto_dude_update_gender();
 
     const FrmId frmId = inventoryComputeCritterFrmId(gDude,
-        gDude->pid,
+        gDude,
         critterGetItem2(gDude),
         critterGetItem1(gDude),
         critterGetArmor(gDude),
@@ -1307,21 +1342,31 @@ static void op_get_attack_type(Program* program)
 
 static void op_force_aimed_shots(Program* program)
 {
-    int pid = programStackPopInteger(program);
-    forceAimedShots(pid);
+    const ProtoId protoId = programStackPopProtoId(program);
+    forceAimedShots(protoId);
 }
 
 static void op_disable_aimed_shots(Program* program)
 {
-    int pid = programStackPopInteger(program);
-    disableAimedShots(pid);
+    const ProtoId protoId = programStackPopProtoId(program);
+    disableAimedShots(protoId);
 }
 
 static void op_play_sfall_sound(Program* program)
 {
     int mode = programStackPopInteger(program);
     const char* path = programStackPopString(program);
-    programStackPushInteger(program, scriptSoundPlay(path, mode));
+
+    int soundId = 0;
+    if (mode >= 0) {
+        int volumeReduction = (mode & 0x7FFF0000) >> 16;
+        ScriptSoundMode soundMode = static_cast<ScriptSoundMode>(mode & 0xF);
+        soundId = scriptSoundPlay(path, soundMode, volumeReduction);
+    } else {
+        programPrintError("play_sfall_sound: invalid script sound mode %d.", mode);
+    }
+
+    programStackPushInteger(program, soundId);
 }
 
 static void op_stop_sfall_sound(Program* program)
@@ -1341,7 +1386,7 @@ static void op_force_encounter_with_flags(Program* program)
 // list_as_array
 static void op_list_as_array(Program* program)
 {
-    int type = programStackPopInteger(program);
+    ListType type = programStackPopEnum<ListType>(program);
     int arrayId = ListAsArray(type);
     programStackPushInteger(program, arrayId);
 }
@@ -1382,10 +1427,10 @@ static void op_get_tile_fid(Program* program)
 {
     int tileData = programStackPopInteger(program);
     int tile = tileData & 0xFFFFFF;
-    int elevation = (tileData >> 24) & 0x0F;
+    MapElevation elevation = static_cast<MapElevation>((tileData >> 24) & 0x0F);
     int mode = tileData >> 28;
 
-    if (!hexGridTileIsValid(tile) || elevation < 0 || elevation >= ELEVATION_COUNT) {
+    if (!hexGridTileIsValid(tile) || !elevationIsValid(elevation)) {
         debugPrint("%s: op_get_tile_fid invalid tile data: tile=%d elevation=%d", program->name, tile, elevation);
         programStackPushInteger(program, 0);
         return;
@@ -1398,17 +1443,22 @@ static void op_get_tile_fid(Program* program)
         return;
     }
 
-    int squareData = _square[elevation]->fid[squareTile];
+    int squareData = _square[elevation]->tileFid[squareTile];
 
+    // Sfall's FRM Limit patch extended FrameId from 12 bits (mask 0xFFF) to 14 bits (mask 0x3FFF), but code doesn't support it yet.
+    // Check the sfall versions prior 4.3.9
     switch (mode) {
     case 1:
-        programStackPushInteger(program, (squareData >> 16) & 0x3FFF);
+        // roof tile frame id
+        programStackPushInteger(program, RoofTileFrmId(squareData).frameId());
         break;
     case 2:
+        // floor tile and roof tile fid
         programStackPushInteger(program, squareData);
         break;
     default:
-        programStackPushInteger(program, squareData & 0x3FFF);
+        // floor tile frame id
+        programStackPushInteger(program, FloorTileFrmId(squareData).frameId());
         break;
     }
 }
@@ -1507,7 +1557,7 @@ static void op_explosions_metarule(Program* program)
         if (1) {
             int minDamage;
             int maxDamage;
-            explosiveGetDamage(param1, &minDamage, &maxDamage);
+            explosiveGetDamage(ProtoId(param1), &minDamage, &maxDamage);
 
             ArrayId arrayId = CreateTempArray(2, 0);
             SetArray(arrayId, ProgramValue { 0 }, ProgramValue { minDamage }, false, program);
@@ -1517,10 +1567,10 @@ static void op_explosions_metarule(Program* program)
         }
         break;
     case EXPL_SET_DYNAMITE_EXPLOSION_DAMAGE:
-        explosiveSetDamage(PROTO_ID_DYNAMITE_I, param1, param2);
+        explosiveSetDamage(ItemProtoTypeId::Dynamite, param1, param2);
         break;
     case EXPL_SET_PLASTIC_EXPLOSION_DAMAGE:
-        explosiveSetDamage(PROTO_ID_PLASTIC_EXPLOSIVES_I, param1, param2);
+        explosiveSetDamage(ItemProtoTypeId::PlasticExplosives, param1, param2);
         break;
     case EXPL_SET_EXPLOSION_MAX_TARGET:
         explosionSetMaxTargets(param1);
@@ -1690,6 +1740,30 @@ static void op_resize_array(Program* program)
     ResizeArray(arrayId, newLen);
 }
 
+// get_npc_level
+static void op_get_npc_level(Program* program)
+{
+    ProgramValue value = programStackPopValue(program);
+    int level = -1;
+    if (value.isString()) {
+        level = partyMemberGetNpcLevel(kPartyMemberLookupByName, programGetString(program, value.opcode, value.integerValue));
+    } else if (value.isInt()) {
+        level = partyMemberGetNpcLevel(value.integerValue);
+    }
+    programStackPushInteger(program, level);
+}
+
+// inc_npc_level
+static void op_inc_npc_level(Program* program)
+{
+    ProgramValue value = programStackPopValue(program);
+    if (value.isString()) {
+        partyMemberIncNpcLevel(kPartyMemberLookupByName, programGetString(program, value.opcode, value.integerValue));
+    } else if (value.isInt()) {
+        partyMemberIncNpcLevel(value.integerValue);
+    }
+}
+
 // party_member_list
 static void op_party_member_list(Program* program)
 {
@@ -1762,7 +1836,7 @@ static void op_make_straight_path(Program* program)
 static void op_obj_blocking_at(Program* program)
 {
     int type = programStackPopInteger(program);
-    int elevation = programStackPopInteger(program);
+    MapElevation elevation = programStackPopEnum<MapElevation>(program);
     int tile = programStackPopInteger(program);
 
     PathBuilderCallback* func = get_blocking_func(type);
@@ -1781,7 +1855,7 @@ static void op_obj_blocking_at(Program* program)
 static void op_create_spatial(Program* program)
 {
     int radius = programStackPopInteger(program);
-    int elevation = programStackPopInteger(program);
+    MapElevation elevation = programStackPopEnum<MapElevation>(program);
     int tile = programStackPopInteger(program);
     int scriptId = programStackPopInteger(program);
 
@@ -1822,18 +1896,18 @@ static void op_create_spatial(Program* program)
 static void op_tile_light(Program* program)
 {
     int tile = programStackPopInteger(program);
-    int elevation = programStackPopInteger(program);
+    MapElevation elevation = programStackPopEnum<MapElevation>(program);
     programStackPushInteger(program, lightGetTileIntensity(elevation, tile));
 }
 
 // tile_get_objs
 static void op_tile_get_objects(Program* program)
 {
-    int elevation = programStackPopInteger(program);
+    MapElevation elevation = programStackPopEnum<MapElevation>(program);
     int tile = programStackPopInteger(program);
     ArrayId arrayId = CreateTempArray(0, SFALL_ARRAYFLAG_RESERVED);
 
-    if (!hexGridTileIsValid(tile) || elevation < 0 || elevation >= ELEVATION_COUNT) {
+    if (!hexGridTileIsValid(tile) || !elevationIsValid(elevation)) {
         debugPrint("%s: op_tile_get_objects invalid tile data: tile=%d elevation=%d", program->name, tile, elevation);
         programStackPushInteger(program, arrayId);
         return;
@@ -1867,7 +1941,7 @@ static void op_make_path(Program* program)
     }
 
     // sfall only requires an empty destination tile when the source object is a critter.
-    int requireEmptyDest = objectTypeFromPid(object->pid) == OBJ_TYPE_CRITTER;
+    int requireEmptyDest = ProtoId(object).objectType() == OBJ_TYPE_CRITTER;
 
     // XXX: pathfinderFindPath does not accept a destination buffer length. Use the
     // same capacity as the engine's AnimationSad::rotations storage so this
@@ -1991,6 +2065,16 @@ static void op_charcode(Program* program)
     } else {
         programStackPushInteger(program, 0);
     }
+}
+
+static void op_set_fake_trait(Program* program)
+{
+    char* desc = programStackPopString(program);
+    int image = programStackPopInteger(program);
+    int active = programStackPopInteger(program);
+    char* name = programStackPopString(program);
+
+    programPrintError("set_fake_trait: not implemented!");
 }
 
 static void op_show_iface_tag(Program* program)
@@ -2416,6 +2500,7 @@ void sfallOpcodesInit()
     // 0x819e - int   get_sfall_global_int(string/int varname)
     interpreterRegisterOpcode(0x819E, op_get_sfall_global_int);
     // 0x819f - float get_sfall_global_float(string/int varname)
+    interpreterRegisterOpcode(0x819F, op_get_sfall_global_float);
     // 0x822d - int   create_array(int element_count, int flags)
     interpreterRegisterOpcode(0x822D, op_create_array);
     // 0x822e - void  set_array(int array, any element, any value)
@@ -2457,12 +2542,17 @@ void sfallOpcodesInit()
     // 0x81c9 - void set_critter_pickpocket_mod(object, int max, int mod)
     // 0x81ca - void set_base_pickpocket_mod(int max, int mod)
 
-    // note: these are deprecated; do not implement
-    // 0x81a3 - int  eax_available()
+    // 0x81a3 - int eax_available()
+    // NOTE: Deprecated in sfall (EAX is not supported); always returns 0.
+    interpreterRegisterOpcode(0x81A3, op_eax_available);
+
+    // note: this is deprecated; do not implement
     // 0x81a4 - void set_eax_environment(int environment)
 
     // 0x81a5 - void inc_npc_level(int pid/string name)
+    interpreterRegisterOpcode(0x81A5, op_inc_npc_level);
     // 0x8241 - int  get_npc_level(int pid/string name)
+    interpreterRegisterOpcode(0x8241, op_get_npc_level);
 
     // 0x81a6 - int get_viewport_x()
     // 0x81a7 - int get_viewport_y()
@@ -2485,6 +2575,7 @@ void sfallOpcodesInit()
 
     // 0x81bb - void set_fake_perk(string name, int level, int image, string desc)
     // 0x81bc - void set_fake_trait(string name, int active, int image, string desc)
+    interpreterRegisterOpcode(0x81BC, op_set_fake_trait);
     // 0x81bd - void set_selectable_perk(string name, int active, int image, string desc)
     // 0x81be - void set_perkbox_title(string title)
     // 0x81bf - void hide_real_perks()
@@ -2735,6 +2826,7 @@ void sfallOpcodesInit()
     // 0x826b - string message_str_game(int fileId, int messageId)
     interpreterRegisterOpcode(0x826B, op_get_message);
     // 0x826c - int sneak_success()
+    interpreterRegisterOpcode(0x826C, op_sneak_success);
     // 0x826d - int tile_light(int elevation, int tileNum)
     interpreterRegisterOpcode(0x826D, op_tile_light);
     // 0x826e - object obj_blocking_line(object objFrom, int tileTo, int blockingType)
