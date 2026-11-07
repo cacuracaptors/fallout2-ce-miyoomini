@@ -1,7 +1,6 @@
 #include "platform_compat.h"
 
 #include <string.h>
-#include <time.h> // TEMP-BOOTLOG
 
 #include <string>
 #include <unordered_map>
@@ -32,18 +31,6 @@
 #include <SDL.h>
 
 namespace fallout {
-
-// TEMP-BOOTLOG: wall time of directory listings and fopen calls.
-double gMiyooDirMs = 0;
-int gMiyooDirCalls = 0;
-double gMiyooFopenMs = 0;
-int gMiyooFopenCalls = 0;
-static double miyooNowMs()
-{
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return t.tv_sec * 1000.0 + t.tv_nsec / 1e6;
-}
 
 static bool compatIsPathSeparator(char ch)
 {
@@ -133,7 +120,6 @@ static const CompatDirectoryCacheEntry* compatDirectoryEntryCacheGet(const std::
         return &(existing->second);
     }
 
-    double miyooDirStart = miyooNowMs(); // TEMP-BOOTLOG
     DIR* dir = opendir(directoryPath.c_str());
     if (dir == nullptr) {
         return nullptr;
@@ -153,9 +139,6 @@ static const CompatDirectoryCacheEntry* compatDirectoryEntryCacheGet(const std::
     }
 
     closedir(dir);
-
-    gMiyooDirMs += miyooNowMs() - miyooDirStart; // TEMP-BOOTLOG
-    gMiyooDirCalls++;
 
     return &cacheEntry;
 }
@@ -454,11 +437,8 @@ FILE* compat_fopen(const char* path, const char* mode)
     bool mayWrite = compatFileModeMayWrite(mode);
 
     char nativePath[COMPAT_MAX_PATH];
-    double miyooFopenStart = miyooNowMs(); // TEMP-BOOTLOG
     compat_prepare_native_path(nativePath, path);
     FILE* stream = fopen(nativePath, mode);
-    gMiyooFopenMs += miyooNowMs() - miyooFopenStart;
-    gMiyooFopenCalls++;
     if (mayWrite && stream != nullptr) {
         compatDirectoryEntryCacheAdd(nativePath);
     }

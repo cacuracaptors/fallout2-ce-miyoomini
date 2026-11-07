@@ -15,6 +15,8 @@
 //
 // Everything is disabled when the game does not run under OnionOS.
 
+#include <SDL.h>
+
 namespace fallout {
 
 typedef bool MiyooShutdownSaveProc();
@@ -42,6 +44,26 @@ void miyooShutdownHandleInGame(MiyooShutdownSaveProc* save);
 // it is turned off outside the game loop (or the game loop is not reached
 // in time). Does not return in that case.
 void miyooShutdownPoll();
+
+// Game Switcher (OnionOS): the MENU button is read from evdev and does what
+// Tweaks > Shortcuts sets for a single, long and double press (by default:
+// Game Switcher, back to the menu, previous game). The game is saved first
+// (same hidden slot as at power off), with the picture the Game Switcher shows.
+// True when the game handles MENU itself (SDL must not turn it into ESC).
+bool miyooMenuKeyOwned();
+
+// Writes the current screen as a PNG (defined in input.cc).
+bool miyooSaveScreenPng(const char* path);
+
+// Volume / brightness bars drawn by OnionOS's keymon straight into the screen:
+// while true, renderPresent() must not present. miyooOverlayJustEnded() is true
+// once after that, to repaint the whole screen.
+bool miyooOverlayHold();
+bool miyooOverlayJustEnded();
+
+// Low battery icon (OnionOS's own look): true when it must be shown, with the
+// 6 rectangles (outline, charge sliver, terminal) in screen pixels.
+bool miyooBatteryRects(int width, int height, SDL_Rect* out);
 
 // Loading boost: while the game loads (startup, saves, maps) the CPU governor
 // is switched to "performance" (each device keeps its own maximum clock), and

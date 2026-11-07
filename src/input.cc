@@ -98,6 +98,12 @@ static bool gMiyooArrowForwardedDown[SDL_NUM_SCANCODES] = { false };
 // leaving it stuck for the rest of the session.
 static Uint32 gMiyooSelectPressTime = 0;
 static const Uint32 SELECT_WATCHDOG_MS = 5000;
+// Select pressed and released alone, quickly, is ESC (the MENU button belongs
+// to OnionOS's Game Switcher). Held longer, or used with another button, it
+// is only a modifier and no ESC is sent when it is released.
+static Uint32 gMiyooSelectDownStamp = 0;
+static bool gMiyooSelectComboUsed = false;
+static const Uint32 SELECT_TAP_MAX_MS = 500;
 // Miyoo Mini: key log. Every button event and what the game did with it is
 // written to keylog.txt in the game folder, one line at a time (flushed, so
 // it survives the game being closed abruptly). Over 2 MB it becomes
@@ -569,6 +575,86 @@ void takeScreenshot()
     unsigned char* palette = gSdlSurface != nullptr ? directDrawGetPalette() : _getSystemPalette();
     gScreenshotHandler(width, height, gScreenshotBuffer, palette);
     internal_free(gScreenshotBuffer);
+}
+
+// Miyoo Mini: the screen as a PNG (the picture OnionOS's Game Switcher shows).
+// Quick settings: the screen is only encoded once, and time matters more than size.
+bool miyooSaveScreenPng(const char* path)
+{
+    int width = _scr_size.right - _scr_size.left + 1;
+    int height = _scr_size.bottom - _scr_size.top + 1;
+    if (width <= 0 || height <= 0) {
+        return false;
+    }
+
+    unsigned char* previousBuffer = gScreenshotBuffer;
+    gScreenshotBuffer = (unsigned char*)internal_malloc(static_cast<size_t>(width) * height);
+    if (gScreenshotBuffer == nullptr) {
+        gScreenshotBuffer = previousBuffer;
+        return false;
+    }
+
+    WINDOWDRAWINGPROC old_src = _scr_blit;
+    _scr_blit = screenshotBlitter;
+
+    WINDOWDRAWINGPROC old_mouse = _mouse_blit;
+    _mouse_blit = screenshotBlitter;
+
+    WindowDrawingProc2* old_mouse_trans = _mouse_blit_trans;
+    _mouse_blit_trans = nullptr;
+
+    windowRefreshAll(&_scr_size);
+
+    _mouse_blit_trans = old_mouse_trans;
+    _mouse_blit = old_mouse;
+    _scr_blit = old_src;
+
+    unsigned char* palette = gSdlSurface != nullptr ? directDrawGetPalette() : _getSystemPalette();
+
+    bool ok = false;
+    {
+        size_t pixels = static_cast<size_t>(width) * height;
+        std::vector<unsigned char> image(pixels * 3);
+        for (size_t i = 0; i < pixels; i++) {
+            unsigned char index = gScreenshotBuffer[i];
+            image[i * 3] = palette[index * 3] << 2;
+            image[i * 3 + 1] = palette[index * 3 + 1] << 2;
+            image[i * 3 + 2] = palette[index * 3 + 2] << 2;
+        }
+
+        lodepng::State state;
+        state.info_raw.colortype = LCT_RGB;
+        state.info_raw.bitdepth = 8;
+        state.info_png.color.colortype = LCT_RGB;
+        state.info_png.color.bitdepth = 8;
+        state.encoder.auto_convert = 0;
+        state.encoder.filter_strategy = LFS_ZERO;
+        state.encoder.zlibsettings.btype = 1;
+        state.encoder.zlibsettings.windowsize = 512;
+        state.encoder.zlibsettings.nicematch = 16;
+        state.encoder.zlibsettings.lazymatching = 0;
+
+        std::vector<unsigned char> png;
+        if (lodepng::encode(png, image, width, height, state) == 0) {
+            char temp[512];
+            snprintf(temp, sizeof(temp), "%s.tmp", path);
+            FILE* stream = fopen(temp, "wb");
+            if (stream != nullptr) {
+                ok = fwrite(png.data(), 1, png.size(), stream) == png.size();
+                ok = (fclose(stream) == 0) && ok;
+                if (ok) {
+                    ok = rename(temp, path) == 0;
+                }
+                if (!ok) {
+                    remove(temp);
+                }
+            }
+        }
+    }
+
+    internal_free(gScreenshotBuffer);
+    gScreenshotBuffer = previousBuffer;
+    return ok;
 }
 
 // 0x4C8FF0
@@ -1200,8 +1286,18 @@ void _GNW95_process_message()
             gMiyooKeyDownState[sc] = isDown;
             if (sc == SDL_SCANCODE_RCTRL && isDown && !wasKeyDown) {
                 gMiyooSelectPressTime = SDL_GetTicks();
+                gMiyooSelectDownStamp = e.key.timestamp;
+                gMiyooSelectComboUsed = false;
+            } else if (isDown && !e.key.repeat && sc != SDL_SCANCODE_RCTRL && gMiyooKeyDownState[SDL_SCANCODE_RCTRL]) {
+                gMiyooSelectComboUsed = true;
             }
             miyooKeyLog("%s %s%s", SDL_GetScancodeName(sc), isDown ? "down" : "up", e.key.repeat ? " (sdl repeat)" : "");
+
+            // Miyoo Mini under OnionOS: MENU is read from evdev by the game
+            // (Game Switcher); it is not an ESC here.
+            if (sc == SDL_SCANCODE_ESCAPE && miyooMenuKeyOwned()) {
+                break;
+            }
 
             bool syntheticSfallKey = sfall_kb_consume_synthetic_key_event(sc, isDown);
 
@@ -1284,6 +1380,15 @@ void _GNW95_process_message()
                         gMiyooArrowForwardedDown[arrowSc] = false;
                     }
                 }
+                // A quick click on Select alone is ESC. Not when it was held
+                // for a while or another button was pressed meanwhile, and
+                // not while typing a name.
+                if (wasKeyDown && !gMiyooSelectComboUsed && !gMiyooTextInputActive
+                    && e.key.timestamp - gMiyooSelectDownStamp < SELECT_TAP_MAX_MS) {
+                    miyooKeyLog("  select tap -> escape");
+                    miyooSendSyntheticKey(SDL_SCANCODE_ESCAPE);
+                }
+                gMiyooSelectComboUsed = false;
                 break;
             }
 

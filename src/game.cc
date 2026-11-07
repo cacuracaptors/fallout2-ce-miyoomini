@@ -4,10 +4,6 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
-#include <signal.h> // TEMP-BOOTLOG
-#include <sys/time.h> // TEMP-BOOTLOG
-#include <ucontext.h> // TEMP-BOOTLOG
-#include <sys/resource.h> // TEMP-BOOTLOG
 
 #include "actions.h"
 
@@ -104,121 +100,6 @@ static void showSplash();
 
 inline constexpr char kBaseModPath[] = "ce.dat";
 
-// TEMP-BOOTLOG (remove after diagnosing slow startup)
-extern double gMiyooFindMs;
-extern int gMiyooFindCalls;
-extern double gMiyooOpenMs;
-extern int gMiyooOpenCalls;
-extern double gMiyooReadMs;
-extern int gMiyooReadCalls;
-extern int gMiyooOpenMiss;
-extern double gMiyooDirMs;
-extern int gMiyooDirCalls;
-extern double gMiyooFopenMs;
-extern int gMiyooFopenCalls;
-
-// TEMP-BOOTLOG: poor man's sampling profiler (program counter every 2 ms of CPU).
-#define MIYOO_PROF_MAX 40000
-static unsigned long gProfPcs[MIYOO_PROF_MAX];
-static volatile int gProfN = 0;
-static bool gProfOn = false;
-static void miyooProfHandler(int, siginfo_t*, void* uc)
-{
-#if defined(__arm__)
-    if (gProfN < MIYOO_PROF_MAX) {
-        gProfPcs[gProfN++] = static_cast<ucontext_t*>(uc)->uc_mcontext.arm_pc;
-    }
-#else
-    (void)uc;
-#endif
-}
-static void miyooProfTimer(int usec)
-{
-    struct itimerval it;
-    it.it_interval.tv_sec = 0;
-    it.it_interval.tv_usec = usec;
-    it.it_value.tv_sec = 0;
-    it.it_value.tv_usec = usec;
-    setitimer(ITIMER_PROF, &it, nullptr);
-}
-static void miyooProfStart()
-{
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_sigaction = miyooProfHandler;
-    sa.sa_flags = SA_SIGINFO | SA_RESTART;
-    sigaction(SIGPROF, &sa, nullptr);
-    miyooProfTimer(2000);
-    gProfOn = true;
-}
-static void miyooProfDump(const char* path)
-{
-    miyooProfTimer(0);
-    FILE* f = fopen(path, "w");
-    if (f != nullptr) {
-        FILE* m = fopen("/proc/self/maps", "r");
-        if (m != nullptr) {
-            char line[512];
-            while (fgets(line, sizeof(line), m) != nullptr) {
-                fputs(line, f);
-            }
-            fclose(m);
-        }
-        fputs("SAMPLES\n", f);
-        for (int i = 0; i < gProfN; i++) {
-            fprintf(f, "%lx\n", gProfPcs[i]);
-        }
-        fclose(f);
-    }
-    gProfN = 0;
-    miyooProfTimer(2000);
-}
-
-void miyooBootLog(const char* tag)
-{
-    if (!gProfOn) {
-        miyooProfStart();
-    }
-    if (strcmp(tag, "gameInit end") == 0) {
-        miyooProfDump("/tmp/f2prof_init.txt");
-    } else if (strcmp(tag, "load: lsgLoadGameInSlot start") == 0) {
-        miyooProfDump("/tmp/f2prof_menu.txt");
-    } else if (strcmp(tag, "mainLoop start") == 0) {
-        miyooProfDump("/tmp/f2prof_load.txt");
-    }
-
-    FILE* f = fopen("/tmp/f2boot.log", "a");
-    if (f == nullptr) return;
-    double up = 0;
-    FILE* u = fopen("/proc/uptime", "r");
-    if (u) { fscanf(u, "%lf", &up); fclose(u); }
-    double start = 0;
-    FILE* s = fopen("/proc/self/stat", "r");
-    if (s) {
-        char buf[1024];
-        size_t n = fread(buf, 1, sizeof(buf) - 1, s);
-        buf[n] = 0;
-        fclose(s);
-        char* p = strrchr(buf, ')');
-        if (p) {
-            unsigned long long st = 0;
-            // fields after ")": state is field 3; starttime is field 22
-            int field = 3;
-            p += 2;
-            while (*p && field < 22) {
-                if (*p == ' ') field++;
-                p++;
-            }
-            st = strtoull(p, nullptr, 10);
-            start = static_cast<double>(st) / 100.0;
-        }
-    }
-    struct rusage ru;
-    getrusage(RUSAGE_SELF, &ru);
-    fprintf(f, "%8.2f s  [cpu %5.2f majflt %ld minflt %ld inblk %ld | open %4.0f/%d read %4.0f/%d dir %4.0f/%d fopen %4.0f/%d miss %d]  %s\n", up - start, ru.ru_utime.tv_sec + ru.ru_utime.tv_usec / 1e6 + ru.ru_stime.tv_sec + ru.ru_stime.tv_usec / 1e6, ru.ru_majflt, ru.ru_minflt, ru.ru_inblock, gMiyooOpenMs, gMiyooOpenCalls, gMiyooReadMs, gMiyooReadCalls, gMiyooDirMs, gMiyooDirCalls, gMiyooFopenMs, gMiyooFopenCalls, gMiyooOpenMiss, tag);
-    fclose(f);
-}
-
 // 0x501C9C aGame_0
 static char _aGame_0[] = "game\\";
 
@@ -266,11 +147,9 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, Window
 {
     char path[COMPAT_MAX_PATH];
 
-    miyooBootLog("gameInit start");
     if (gameMemoryInit() == -1) {
         return -1;
     }
-    miyooBootLog("gameMemoryInit");
 
     // Sfall config should be initialized before game config, since it can
     // override it's file name.
@@ -279,9 +158,7 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, Window
     // SFALL: Execute all code that should be executed BEFORE game init
     sfallOnBeforeGameInit();
 
-    miyooBootLog("sfallConfigInit+onBeforeGameInit");
     settingsInit(isMapper, argc, argv);
-    miyooBootLog("settingsInit");
 
     debugModeInit(settings.debug.mode.c_str());
 
@@ -293,10 +170,8 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, Window
         return -1;
     }
 
-    miyooBootLog("gameDbInit");
     // Content config reads from the VFS, so it must be initialized after gameDbInit.
     contentConfigInit();
-    miyooBootLog("contentConfigInit");
 
     // Message list repository is considered a specialized file manager, so
     // it should be initialized early in the process.
@@ -318,15 +193,11 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, Window
     }
 
     programWindowSetTitle(visibleWindowTitle);
-    miyooBootLog("before windowInit");
     windowInit(1, flags);
-    miyooBootLog("windowInit");
     paletteInit();
-    miyooBootLog("paletteInit");
 
     // SFALL: Execute all code that should be executed ON game init
     sfallOnGameInit();
-    miyooBootLog("sfallOnGameInit");
 
     const char* language = settings.system.language.c_str();
     if (compat_stricmp(language, FRENCH) == 0) {
@@ -349,48 +220,35 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, Window
     }
 
     debugPrint(">init_options_menu\n");
-    miyooBootLog("init_options_menu");
 
     if (!gIsMapper && skipOpeningMovies < 2) {
         showSplash();
     }
-    miyooBootLog("showSplash done");
 
     interfaceFontsInit();
     fontManagerAdd(&gModernFontManager);
     fontSetCurrent(font);
-    miyooBootLog("init: fonts");
 
     screenshotHandlerConfigure(KEY_F12, gameTakeScreenshot);
 
     tileDisable();
 
     randomInit();
-    miyooBootLog("init: random");
     badwordsInit();
-    miyooBootLog("init: badwords");
     skillsInit();
-    miyooBootLog("init: skills");
     statsInit();
-    miyooBootLog("init: stats");
 
     if (partyMembersInit() != 0) {
         debugPrint("Failed on partyMember_init\n");
         return -1;
     }
 
-    miyooBootLog("init: partyMembers");
     perksInit();
-    miyooBootLog("init: perks");
     traitsInit();
-    miyooBootLog("init: traits");
     itemsInit();
-    miyooBootLog("init: items");
     queueInit();
     critterInit();
-    miyooBootLog("init: critter");
     aiInit();
-    miyooBootLog("init: ai");
     inventoryResetDude();
 
     if (gameSoundInit() != 0) {
@@ -398,11 +256,9 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, Window
     }
 
     debugPrint(">gsound_init\t");
-    miyooBootLog("init: gsound");
 
     movieInit();
     debugPrint(">initMovie\t\t");
-    miyooBootLog("init: movie");
 
     if (gameMoviesInit() != 0) {
         debugPrint("Failed on gmovie_init\n");
@@ -424,7 +280,6 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, Window
     }
 
     debugPrint(">iso_init\t");
-    miyooBootLog("init: iso");
 
     if (gameMouseInit() != 0) {
         debugPrint("Failed on gmouse_init\n");
@@ -439,7 +294,6 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, Window
     }
 
     debugPrint(">proto_init\t");
-    miyooBootLog("init: proto");
 
     animationInit();
     debugPrint(">anim_init\t");
@@ -450,7 +304,6 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, Window
     }
 
     debugPrint(">scr_init\t");
-    miyooBootLog("init: scripts");
 
     if (gameLoadGlobalVars() != 0) {
         debugPrint("Failed on game_load_info\n");
@@ -458,7 +311,6 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, Window
     }
 
     debugPrint(">game_load_info\t");
-    miyooBootLog("init: load_info");
 
     if (_scr_game_init() != 0) {
         debugPrint("Failed on scr_game_init\n");
@@ -466,7 +318,6 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, Window
     }
 
     debugPrint(">scr_game_init\t");
-    miyooBootLog("init: scr_game_init");
 
     if (wmWorldMap_init() != 0) {
         debugPrint("Failed on wmWorldMap_init\n");
@@ -474,19 +325,16 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, Window
     }
 
     debugPrint(">wmWorldMap_init\t");
-    miyooBootLog("init: worldmap");
 
     characterEditorInit();
     debugPrint(">CharEditInit\t");
 
     pipboyInit();
     debugPrint(">pip_init\t\t");
-    miyooBootLog("init: pipboy");
 
     _InitLoadSave();
     lsgInit();
     debugPrint(">InitLoadSave\t");
-    miyooBootLog("init: loadsave");
 
     if (gameDialogInit() != 0) {
         debugPrint("Failed on gdialog_init\n");
@@ -501,7 +349,6 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, Window
     }
 
     debugPrint(">combat_init\t");
-    miyooBootLog("init: combat");
 
     if (automapInit() != 0) {
         debugPrint("Failed on automap_init\n");
@@ -525,7 +372,6 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, Window
     }
 
     debugPrint(">message_load\t");
-    miyooBootLog("init: message_load");
 
     // CE: Optional, the code has the English texts.
     messageListInit(&gCeMessageList);
@@ -545,7 +391,6 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, Window
     }
 
     debugPrint(">endgameDeathEndingInit\n");
-    miyooBootLog("init: endgame");
 
     // SFALL
     premadeCharactersInit();
@@ -583,7 +428,6 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, Window
 
     // SFALL: Execute all code that should be executed AFTER game init
     sfallOnAfterGameInit();
-    miyooBootLog("gameInit end");
 
     return 0;
 }
@@ -1610,28 +1454,23 @@ static int gameDbInit()
     // Resulting chain (head = highest priority):
     //   master_patches > critter_patches > mods > patchXXX.dat > ce.dat > f2_res_dat > critter.dat > master.dat
 
-    miyooBootLog("db: master.dat open...");
     if (dbOpen(master_dat_path) == -1) {
         showMessageBox("Could not find the master datafile. Please make sure the FALLOUT CD is in the drive and that you are running FALLOUT from the directory you installed it to.");
         return -1;
     }
 
-    miyooBootLog("db: critter.dat open...");
     if (dbOpen(critter_dat_path) == -1) {
         showMessageBox("Could not find the critter datafile. Please make sure the FALLOUT CD is in the drive and that you are running FALLOUT from the directory you installed it to.");
         return -1;
     }
 
-    miyooBootLog("db: f2_res.dat...");
     const char* highResPatchDatPath = settings.system.f2_res_dat_path.c_str();
     if (*highResPatchDatPath != '\0' && compat_access(highResPatchDatPath, 0) == 0) {
         debugPrint("Loading HRP data mod: %s\n", highResPatchDatPath);
         dbOpen(highResPatchDatPath);
     }
 
-    miyooBootLog("db: ce.dat...");
     TryLoadBaseCEMod();
-    miyooBootLog("db: patchNNN.dat...");
 
     char* path_file_name_template = nullptr;
     configGetString(&gSfallConfig, SFALL_CONFIG_MISC_KEY, SFALL_CONFIG_PATCH_FILE, &path_file_name_template);
@@ -1649,9 +1488,7 @@ static int gameDbInit()
         dbOpen(filename);
     }
 
-    miyooBootLog("db: sfallLoadMods...");
     sfallLoadMods();
-    miyooBootLog("db: sfallLoadMods done");
 
     if (critter_patches_path != nullptr) {
         dbOpen(critter_patches_path);
@@ -1660,7 +1497,6 @@ static int gameDbInit()
     if (master_patches_path != nullptr) {
         dbOpen(master_patches_path);
     }
-    miyooBootLog("db: patches dirs done");
 
     return 0;
 }

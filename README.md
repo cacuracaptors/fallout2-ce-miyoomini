@@ -21,6 +21,12 @@ text entry system for typing.
 - Working audio and video, including cutscenes
 - Saves automatically when you turn the device off, and picks up right where you left off
   the next time you turn it on (see [Turning the device off](#turning-the-device-off-save-and-resume))
+- OnionOS Game Switcher support: the Menu key does what you set in OnionOS (by default: Game Switcher,
+  back to the menu, previous game), saving first and resuming where you left off (see
+  [Game Switcher](#game-switcher))
+- Faster startup and loading: the game's data files are indexed once (see the changelog)
+- Low battery icon that does not flicker, and low battery shutdown handled like OnionOS does for its
+  emulators
 
 ## Quality of life benefits over vanilla Fallout 2
 
@@ -38,7 +44,7 @@ text entry system for typing.
 </p>
 
 - Last used save slot is remembered
-- You can cancel elevator floor selection using the Menu key
+- You can cancel elevator floor selection with a quick click on Select (Esc)
 - Item/Corpse/Container/Critter highlighting (hold Y)
 - Dozens of small things that just work a little better than they did in the original - better
   pathfinding, fewer graphics glitches, less finicky weapon stacking, and much more
@@ -124,14 +130,19 @@ small numbers for different modes; more details in the [FOR:CE](https://github.c
 | L2       | Switch active item              | Automap                 |
 | R2       | Switch item mode                | Center camera on player |
 | Start    | Enter / OK / End combat         | -                        |
-| Select   | *(modifier)*                    | -                        |
-| Menu key | Esc / Exit / Return / Open Menu | -                        |
+| Select   | Esc (quick click)               | *(modifier)*             |
+| Menu key | OnionOS Game Switcher           | -                        |
 
 Holding **Y** activates sfall features bound to Shift, such as the Item/Critter Highlighting from RPU
 (configured in `mods/sfall-mods.ini`).
 
-The Menu key fires Esc on **release**, not on press - this means the OnionOS Menu+Power screenshot
-combo won't accidentally exit the game before you can take a screenshot.
+**Select** has two roles. A quick click on its own is **Esc** (exit / return / open the game menu).
+Holding it and pressing another button gives the second column. If you hold Select, change your
+mind and let go without pressing anything else, nothing happens.
+
+The **Menu key** belongs to OnionOS now: a press, a long press and a double press do what you set in
+OnionOS's Tweaks > Shortcuts > In-game Menu button (see [Game Switcher](#game-switcher)). Menu with
+another button (Menu+Power screenshot, Menu+volume brightness) does none of them.
 
 ### Typing text (character name, save names, etc.)
 
@@ -144,7 +155,7 @@ own text field, the same system used in our [Fallout (1997) port](https://github
 - **A**: confirms the current letter and moves to the next position
 - **B**: deletes the last confirmed letter
 - **Start**: confirms the whole text entry (Enter)
-- **Menu key**: cancels the whole text entry (Esc)
+- **Select** (quick click): cancels the whole text entry (Esc)
 
 A Miyoo-specific "Quick Guide" screen with this same control scheme (pictured above) is available from
 the Options menu at any time in-game.
@@ -168,8 +179,43 @@ itself and loads that save directly, skipping the intro and the main menu.
   still pick up from the power-off save the next time you open it.
 - A forced shutdown (holding the power button for about 10 seconds) does not save.
 
+## Game Switcher
+
+The Menu key works as in OnionOS's own emulators. In Tweaks > Shortcuts you choose what a single
+press, a long press (0.7 s) and a double press (two presses within 0.3 s) do. By default: the
+Game Switcher, back to the OnionOS menu, and the previous game.
+
+- The game is saved first, in the same hidden slot as the power-off save, and the Game Switcher
+  shows a picture of the screen you left.
+- Like at power off, open windows (inventory, Pip-Boy, character screen, menus) are closed first
+  with Esc, and enemy turns and scripted scenes are waited for.
+- Choosing the game again in the Game Switcher loads that save and goes on where you left off.
+  Opening the game from the game list starts it from the beginning, as usual.
+- Where the game cannot be saved (in a conversation, on the world map, or if the screen does not
+  come back to the map in a few seconds) the Menu key does nothing and you keep playing.
+- In the main menu or the intro the game just closes.
+
+## Low battery
+
+Under the "warn at" level set in OnionOS the usual red battery icon shows at the top right, without
+flickering. Under the "exit at" level the game saves and closes, and OnionOS shows the low battery
+screen and turns the device off; the next start picks up from that save (as with the power button).
+Both levels, and the options to turn them off, are OnionOS's own settings.
+
+The volume and brightness bars appear over the game; the picture stays still while they show. If
+they ever misbehave, create an empty `overlay_off.txt` in the game folder.
+
 ## Changelog
 
+- **v1.3.0** - OnionOS Game Switcher: the Menu key does what you set in Tweaks (Game Switcher, back
+  to the menu, previous game, by default), saving first and resuming where you left off; the
+  Game Switcher shows a picture of your game. As with the power-off save, open windows are closed
+  first. Select, clicked quickly on its own, is now Esc (the Menu key's old job); holding it is
+  still the modifier, and letting go without pressing anything does nothing. Low battery icon
+  that does not flicker, and the game now saves and closes at the "exit at" level, as OnionOS does
+  for its emulators. Volume and brightness bars show over the game. Faster startup and loading:
+  the game's data files get an index (`.miyoo.idx` files next to each `.dat`, created on the first
+  run and rebuilt by themselves if a `.dat` changes - they can be deleted at any time).
 - **v1.2.0** - Save on power off: turning the device off with the power button while playing now
   saves your progress in a separate, hidden slot (it never replaces your own saves), and the next
   time you turn the device on the game starts by itself and picks up right where you left off,
@@ -314,6 +360,18 @@ The final ARM (armhf) binary `fallout2-ce` will be in `build/`.
   launches the game again on boot, and the next launch loads that save through the main menu's
   load path, skipping the intro movies and the menu. A small script in `.tmp_update/checkoff`
   (removed when the game closes normally) makes OnionOS wait up to 20 s for the save.
+- **`src/miyoo_shutdown.cc`, `src/input.cc`, `src/svga.cc`** - OnionOS Game Switcher: the Menu key
+  is read from evdev and timed as OnionOS's keymon does (single, long, double press; any other key
+  cancels), the game is saved through the power-off path, the Game Switcher's picture is written
+  to `romScreens` (named by OnionOS's hash of the game's entry in the recent list), and the
+  action OnionOS expects is left (`.runGameSwitcher`, or the quick switch to the previous game).
+  The save is loaded again only when `/tmp/prev_state` says the game was opened from the Game
+  Switcher. A quick click on Select sends Esc (the Menu key no longer does). The low battery icon
+  is drawn into the texture (OnionOS's `batmon` is told not to draw its own with
+  `/tmp/hasBatteryDisplay`), and the screen is left alone while `keymon` draws the volume and
+  brightness bars.
+- **`src/dfile.cc`, `src/platform_compat.cc`** - the data files' directories are indexed once and
+  the index is kept in `.miyoo.idx` files; failed lookups are answered without touching the card.
 - **`src/audio_engine.cc`** - the mixer converts 32 sample frames per call instead of one, and
   never reads past the end of a sound buffer.
 - **`src/movie.cc`** - lets the renderer know when a movie is shown as an overlay, so it is

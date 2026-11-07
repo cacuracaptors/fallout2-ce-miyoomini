@@ -6,7 +6,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <sys/stat.h>
@@ -20,48 +19,6 @@
 #include "platform_compat.h"
 
 namespace fallout {
-
-void miyooBootLog(const char* tag); // TEMP-BOOTLOG
-
-// TEMP-BOOTLOG: total time spent matching file name patterns in the archives.
-double gMiyooFindMs = 0;
-int gMiyooFindCalls = 0;
-struct MiyooFindTimer {
-    struct timespec a;
-    MiyooFindTimer() { clock_gettime(CLOCK_MONOTONIC, &a); }
-    ~MiyooFindTimer()
-    {
-        struct timespec b;
-        clock_gettime(CLOCK_MONOTONIC, &b);
-        gMiyooFindMs += (b.tv_sec - a.tv_sec) * 1000.0 + (b.tv_nsec - a.tv_nsec) / 1e6;
-        gMiyooFindCalls++;
-    }
-};
-
-// TEMP-BOOTLOG: wall time spent opening entries and reading compressed data.
-double gMiyooOpenMs = 0;
-int gMiyooOpenCalls = 0;
-double gMiyooReadMs = 0;
-int gMiyooReadCalls = 0;
-int gMiyooOpenMiss = 0;
-struct MiyooAccTimer {
-    struct timespec a;
-    double* ms;
-    int* n;
-    MiyooAccTimer(double* m, int* c)
-        : ms(m)
-        , n(c)
-    {
-        clock_gettime(CLOCK_MONOTONIC, &a);
-    }
-    ~MiyooAccTimer()
-    {
-        struct timespec b;
-        clock_gettime(CLOCK_MONOTONIC, &b);
-        *ms += (b.tv_sec - a.tv_sec) * 1000.0 + (b.tv_nsec - a.tv_nsec) / 1e6;
-        (*n)++;
-    }
-};
 
 // The size of decompression buffer for reading compressed [DFile]s.
 #define DFILE_DECOMPRESSION_BUFFER_SIZE (0x1000)
@@ -344,11 +301,7 @@ DBase* dbaseOpen(const char* filePath, int* errorFlags)
         return nullptr;
     }
 
-    {
-        char tag[300];
-        snprintf(tag, sizeof(tag), "dbaseOpen start %s", filePath);
-        miyooBootLog(tag);
-    }
+
     // Miyoo Mini: with a valid index cache the .DAT is not touched at all.
     DatTable datTable;
     bool cached = dbaseLoadCachedDatTable(filePath, &datTable);
@@ -413,8 +366,6 @@ DBase* dbaseOpen(const char* filePath, int* errorFlags)
 
     memset(dbase->entries, 0, sizeof(*dbase->entries) * dbase->entriesLength);
 
-    miyooBootLog("  table: loaded, parsing"); // TEMP-BOOTLOG
-
     // Parse the entries table from memory.
     int entryIndex;
     entryIndex = 0;
@@ -472,11 +423,6 @@ DBase* dbaseOpen(const char* filePath, int* errorFlags)
 
     dbase->path = compat_strdup(filePath);
     dbase->dataOffset = fileSize - datTable.dbaseDataSize;
-    {
-        char tag[300];
-        snprintf(tag, sizeof(tag), "dbaseOpen done  %s entries=%d tableBytes=%d", filePath, dbase->entriesLength, datTable.entriesDataSize);
-        miyooBootLog(tag);
-    }
 
     dbaseBuildMissFilter(dbase);
 
@@ -564,7 +510,6 @@ static int dbasePrefixCompare(const char* path, const char* prefix, size_t lengt
 // 0x4E5308 dbase_findfirst
 bool dbaseFindFirstEntry(DBase* dbase, DFileFindData* findFileData, const char* pattern)
 {
-    MiyooFindTimer miyooFindTimer;
     size_t prefixLength = dbasePatternPrefixLength(pattern);
 
     int start = 0;
@@ -601,7 +546,6 @@ bool dbaseFindFirstEntry(DBase* dbase, DFileFindData* findFileData, const char* 
 // 0x4E53A0 dbase_findnext
 bool dbaseFindNextEntry(DBase* dbase, DFileFindData* findFileData)
 {
-    MiyooFindTimer miyooFindTimer;
     size_t prefixLength = dbasePatternPrefixLength(findFileData->pattern);
     for (int index = findFileData->index + 1; index < dbase->entriesLength; index++) {
         DBaseEntry* entry = &(dbase->entries[index]);
@@ -1319,19 +1263,16 @@ static bool dbaseParseZip(DBase* dbase, FILE* stream, int& errorFlags)
 // 0x4E5D9C dfile_fopen_helper
 static DFile* dfileOpenInternal(DBase* dbase, const char* filePath, const char* mode, DFile* dfile)
 {
-    MiyooAccTimer miyooOpenTimer(&gMiyooOpenMs, &gMiyooOpenCalls); // TEMP-BOOTLOG
     DBaseEntry* entry = nullptr;
     if (dbase->missFilter != nullptr) {
         unsigned int bit = dbaseHashPath(filePath) & dbase->missFilterMask;
         if ((dbase->missFilter[bit >> 3] & (1u << (bit & 7))) == 0) {
-            gMiyooOpenMiss++; // TEMP-BOOTLOG
             goto err;
         }
     }
 
     entry = (DBaseEntry*)bsearch(filePath, dbase->entries, dbase->entriesLength, sizeof(*dbase->entries), dbaseFindEntryByFilePath);
     if (entry == nullptr) {
-        gMiyooOpenMiss++; // TEMP-BOOTLOG
         goto err;
     }
 
@@ -1504,12 +1445,7 @@ static size_t dfileInflate(DFile* stream, unsigned char* dest, size_t size)
             // No more unprocessed data, request next chunk.
             size_t bytesToRead = std::min(DFILE_DECOMPRESSION_BUFFER_SIZE, stream->entry->dataSize - stream->compressedBytesRead);
 
-            bool miyooReadOk; // TEMP-BOOTLOG
-            {
-                MiyooAccTimer miyooReadTimer(&gMiyooReadMs, &gMiyooReadCalls);
-                miyooReadOk = fread(stream->decompressionBuffer, bytesToRead, 1, stream->stream) == 1;
-            }
-            if (!miyooReadOk) {
+            if (fread(stream->decompressionBuffer, bytesToRead, 1, stream->stream) != 1) {
                 break;
             }
 

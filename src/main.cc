@@ -82,11 +82,9 @@ static bool commandLineDevEndgame = false;
 static bool commandLineDevEndgameMovie = false;
 
 // 0x48099C
-void miyooBootLog(const char* tag); // TEMP-BOOTLOG
 
 int falloutMain(int argc, char** argv)
 {
-    miyooBootLog("falloutMain start");
     if (!autorunMutexCreate()) {
         return 1;
     }
@@ -94,7 +92,6 @@ int falloutMain(int argc, char** argv)
     if (!falloutInit(argc, argv)) {
         return 1;
     }
-    miyooBootLog("falloutInit done");
 
     mainParseCommandLineArguments(argc, argv);
 
@@ -119,9 +116,7 @@ int falloutMain(int argc, char** argv)
         }
     }
 
-    miyooBootLog("intro/fade done");
     if (mainMenuWindowInit() == 0) {
-        miyooBootLog("mainMenuWindowInit");
         bool done = false;
         while (!done) {
             keyboardReset();
@@ -443,7 +438,6 @@ static void main_unload_new()
 static void mainLoop()
 {
     miyooBoostReset();
-    miyooBootLog("mainLoop start");
     bool cursorWasHidden = cursorIsHidden();
     if (cursorWasHidden) {
         mouseShowCursor();

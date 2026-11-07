@@ -13,6 +13,7 @@
 #include "game.h"
 #include "interface.h"
 #include "memory.h"
+#include "miyoo_shutdown.h"
 #include "mouse.h"
 #include "movie.h"
 #include "scan_unimplemented.h"
@@ -635,6 +636,27 @@ void renderPresent()
     // Miyoo Mini: nothing changed since the last present, so the screen
     // already shows the right image. A movie shown as an overlay changes on
     // its own, so it is always presented.
+    // Miyoo Mini: OnionOS's volume / brightness bars are being shown (they
+    // are drawn straight into the screen memory): leave the screen alone, then
+    // repaint all of it once they are gone.
+    if (miyooOverlayHold()) {
+        return;
+    }
+    if (miyooOverlayJustEnded()) {
+        screenMarkDirtyAll();
+    }
+
+    // Miyoo Mini: low battery icon. Drawn into the texture's picture (the
+    // renderer here only copies textures) at every upload, and taken out of it
+    // again afterwards. When it appears or goes away the whole screen is sent.
+    SDL_Rect batteryRects[6];
+    const bool batteryIcon = miyooBatteryRects(gSdlTextureSurface->w, gSdlTextureSurface->h, batteryRects);
+    static bool batteryIconShown = false;
+    if (batteryIcon != batteryIconShown) {
+        batteryIconShown = batteryIcon;
+        screenMarkDirtyAll();
+    }
+
     Uint32 nowTicks = SDL_GetTicks();
     if (gScreenDirtyRect.w == 0 && !movieDirectOverlayIsActive()
         && nowTicks - gLastPresentTicks < kForcedPresentIntervalMs) {
@@ -644,7 +666,19 @@ void renderPresent()
     if (gScreenDirtyRect.w != 0) {
         // The whole texture is uploaded: the Miyoo Mini renderer ignores the
         // position of a partial update (it always writes at the top-left corner).
+        if (batteryIcon) {
+            Uint32 red = SDL_MapRGB(gSdlTextureSurface->format, 255, 0, 0);
+            for (int i = 0; i < 6; i++) {
+                SDL_FillRect(gSdlTextureSurface, &batteryRects[i], red);
+            }
+        }
         SDL_UpdateTexture(gSdlTexture, nullptr, gSdlTextureSurface->pixels, gSdlTextureSurface->pitch);
+        if (batteryIcon && gSdlSurface != nullptr) {
+            // Put the game's picture back under the icon.
+            SDL_Rect area = { batteryRects[0].x, batteryRects[0].y, batteryRects[5].x + batteryRects[5].w - batteryRects[0].x, batteryRects[0].h };
+            area.h = batteryRects[2].h;
+            SDL_BlitSurface(gSdlSurface, &area, gSdlTextureSurface, &area);
+        }
         gScreenDirtyRect.w = 0;
         gScreenDirtyRect.h = 0;
     }

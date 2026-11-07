@@ -72,7 +72,6 @@
 
 namespace fallout {
 
-void miyooBootLog(const char* tag); // TEMP-BOOTLOG
 
 #define LOAD_SAVE_SIGNATURE "FALLOUT SAVE FILE"
 #define LOAD_SAVE_DESCRIPTION_LENGTH 30
@@ -2045,7 +2044,6 @@ static int lsgLoadGameInSlot(int slot)
 {
     MiyooBoostScope miyooBoost;
 
-    miyooBootLog("load: lsgLoadGameInSlot start");
     if (slot < 0 || slot >= saveLoadTotalSlots) {
         return -1;
     }
@@ -2857,7 +2855,6 @@ static int _DummyFunc(File* stream)
 // 0x47F490
 static int _PrepLoad(File* stream)
 {
-    miyooBootLog("load: PrepLoad");
     gameReset();
     gameMouseSetCursor(MOUSE_CURSOR_WAIT_PLANET);
     gMapHeader.name[0] = '\0';
@@ -2868,7 +2865,6 @@ static int _PrepLoad(File* stream)
 // 0x47F4C8
 static int _EndLoad(File* stream)
 {
-    miyooBootLog("load: EndLoad");
     wmMapMusicStart();
     dudeSetName(_LSData[_slot_cursor].characterName);
     interfaceBarRefresh();
@@ -2996,7 +2992,6 @@ static int _GameMap2Slot(File* stream)
 // 0x47F990
 static int _SlotMap2Game(File* stream)
 {
-    miyooBootLog("load: SlotMap2Game (map)");
     debugPrint("LOADSAVE: in SlotMap2Game\n");
 
     int fileNameListLength;
@@ -3449,7 +3444,7 @@ bool lsgMiyooShutdownSave()
     int rc = -1;
     if (messageListInit(&gLoadSaveMessageList)) {
         char path[COMPAT_MAX_PATH];
-        snprintf(path, sizeof(path), "%s%s", asc_5186C8, "LSGAME.MSG");
+        snprintf(path, sizeof(path), "%s%s", gGameMsgPath, "LSGAME.MSG");
         if (messageListLoad(&gLoadSaveMessageList, path)) {
             messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_LSGAME, &gLoadSaveMessageList);
 
