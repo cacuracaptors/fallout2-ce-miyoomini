@@ -155,7 +155,7 @@ own text field, the same system used in our [Fallout (1997) port](https://github
 - **A**: confirms the current letter and moves to the next position
 - **B**: deletes the last confirmed letter
 - **Start**: confirms the whole text entry (Enter)
-- **Select** (quick click): cancels the whole text entry (Esc)
+- **Menu key** or **Select** (quick click): cancels the whole text entry (Esc)
 
 A Miyoo-specific "Quick Guide" screen with this same control scheme (pictured above) is available from
 the Options menu at any time in-game.
@@ -207,6 +207,13 @@ they ever misbehave, create an empty `overlay_off.txt` in the game folder.
 
 ## Changelog
 
+- **v1.3.1** - The in-game Quick Guide now shows the v1.3.0 controls (Select as Esc, Menu key as
+  the Game Switcher). Fixed cancelling a text entry (character name, save names): the Menu key
+  and a quick click on Select now both cancel it, as the README already said. This release also
+  carries everything from v1.3.0, which was released just before it: OnionOS Game Switcher
+  support (the Menu key does what you set in OnionOS, saving first and resuming where you left
+  off), Select as Esc, the non-flickering low battery icon with save and close at the "exit at"
+  level, volume and brightness bars over the game, and faster startup and loading.
 - **v1.3.0** - OnionOS Game Switcher: the Menu key does what you set in Tweaks (Game Switcher, back
   to the menu, previous game, by default), saving first and resuming where you left off; the
   Game Switcher shows a picture of your game. As with the power-off save, open windows are closed

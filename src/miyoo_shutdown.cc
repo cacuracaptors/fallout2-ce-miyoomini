@@ -633,6 +633,10 @@ static void menuGesture(int gesture)
     if (action != kMenuSwitcher && action != kMenuExit && action != kMenuQuick) {
         return; // off, or RetroArch's own menu: nothing to do here
     }
+    // Typing a name: MENU cancels the entry (ESC, sent by input.cc).
+    if (miyooTextInputActive()) {
+        return;
+    }
     if (gMenuKind == 0 && !gRequested) {
         gMenuKind = action;
     }

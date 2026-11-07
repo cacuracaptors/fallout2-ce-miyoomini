@@ -39,6 +39,7 @@ void _GNW95_lost_focus();
 
 void beginTextInput();
 void endTextInput();
+bool miyooTextInputActive();
 
 } // namespace fallout
 

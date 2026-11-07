@@ -1294,8 +1294,9 @@ void _GNW95_process_message()
             miyooKeyLog("%s %s%s", SDL_GetScancodeName(sc), isDown ? "down" : "up", e.key.repeat ? " (sdl repeat)" : "");
 
             // Miyoo Mini under OnionOS: MENU is read from evdev by the game
-            // (Game Switcher); it is not an ESC here.
-            if (sc == SDL_SCANCODE_ESCAPE && miyooMenuKeyOwned()) {
+            // (Game Switcher); it is not an ESC here, except while typing a
+            // name, where it cancels the text entry.
+            if (sc == SDL_SCANCODE_ESCAPE && miyooMenuKeyOwned() && !gMiyooTextInputActive) {
                 break;
             }
 
@@ -1381,9 +1382,8 @@ void _GNW95_process_message()
                     }
                 }
                 // A quick click on Select alone is ESC. Not when it was held
-                // for a while or another button was pressed meanwhile, and
-                // not while typing a name.
-                if (wasKeyDown && !gMiyooSelectComboUsed && !gMiyooTextInputActive
+                // for a while or another button was pressed meanwhile.
+                if (wasKeyDown && !gMiyooSelectComboUsed
                     && e.key.timestamp - gMiyooSelectDownStamp < SELECT_TAP_MAX_MS) {
                     miyooKeyLog("  select tap -> escape");
                     miyooSendSyntheticKey(SDL_SCANCODE_ESCAPE);
@@ -1670,6 +1670,11 @@ void endTextInput()
 {
     SDL_StopTextInput();
     gMiyooTextInputActive = false;
+}
+
+bool miyooTextInputActive()
+{
+    return gMiyooTextInputActive;
 }
 
 } // namespace fallout
