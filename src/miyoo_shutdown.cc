@@ -862,6 +862,57 @@ bool miyooBatteryRects(int width, int height, SDL_Rect* out)
 
 // ---------------------------------------------------------------------------
 
+// CPU clock by device: 1800 MHz only on the Miyoo Mini Plus; the Mini, Mini V4
+// and Mini Flip do not hold it (the game freezes), so they get 1600. OnionOS
+// writes the model to /tmp/deviceModel (283 = Mini, 354 = Mini Plus) and only
+// the Plus has /customer/app/axp_test. The screen is checked too: the Plus is
+// 640x480, the Mini V4 and the Flip are 752x560 (the Flip runs a version of
+// Onion made by someone else, and what it writes to deviceModel is unknown).
+// Anything unknown gets the safe value. Set once, at startup: changing the
+// clock while the game runs is not safe.
+static int defaultCpuClockMhz()
+{
+    int model = 0;
+    FILE* stream = fopen("/tmp/deviceModel", "r");
+    if (stream != nullptr) {
+        if (fscanf(stream, "%d", &model) != 1) {
+            model = 0;
+        }
+        fclose(stream);
+    }
+    if (model == 0 && fileExists("/customer/app/axp_test")) {
+        model = 354;
+    }
+
+    int width = 0;
+    int height = 0;
+    int fd = open("/dev/fb0", O_RDONLY);
+    if (fd >= 0) {
+        struct fb_var_screeninfo info;
+        if (ioctl(fd, FBIOGET_VSCREENINFO, &info) == 0) {
+            width = (int)info.xres;
+            height = (int)info.yres;
+        }
+        close(fd);
+    }
+
+    bool plusScreen = (width == 640 && height == 480) || (width == 480 && height == 640);
+    return (model == 354 && plusScreen) ? 1800 : 1600;
+}
+
+static void applyCpuClock()
+{
+    const char* tool = "/mnt/SDCARD/.tmp_update/bin/cpuclock";
+    if (!fileExists(tool)) {
+        return;
+    }
+    char command[160];
+    snprintf(command, sizeof(command), "%s %d >/dev/null 2>&1", tool, defaultCpuClockMhz());
+    if (system(command) != 0) {
+        // (the clock stays as it was)
+    }
+}
+
 void miyooShutdownInit(const char* executablePath)
 {
     if (!fileExists(kOnionDir)) {
@@ -869,6 +920,8 @@ void miyooShutdownInit(const char* executablePath)
     }
 
     gOnion = true;
+
+    applyCpuClock();
 
     // Loading boost for everything from here to the main menu.
     miyooBoostBegin();

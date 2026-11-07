@@ -11,7 +11,8 @@ text entry system for typing.
 
 ## OnionOS Exclusive Features
 
-- Runs at full speed, no overclock needed
+- Runs at full speed: the CPU clock is set by itself for each device, 1800 MHz on the Miyoo Mini
+  Plus and 1600 MHz on the other Mini models (see [CPU clock](#cpu-clock))
 - Software rendering (the Miyoo Mini Plus has no 3D GPU)
 - A full control scheme adapted for the Miyoo Mini Plus' hardware, which has no analog sticks
   (see [Controls](#controls))
@@ -205,9 +206,19 @@ Both levels, and the options to turn them off, are OnionOS's own settings.
 The volume and brightness bars appear over the game; the picture stays still while they show. If
 they ever misbehave, create an empty `overlay_off.txt` in the game folder.
 
+## CPU clock
+
+At startup, under OnionOS, the game sets the CPU clock with OnionOS's own `cpuclock` tool, by
+device: **1800 MHz on the Miyoo Mini Plus** and **1600 MHz on the other models** (Mini, Mini V4,
+Mini Flip), which do not hold 1800 MHz. The model is read from what OnionOS writes in
+`/tmp/deviceModel` (and the screen size), and any device the game does not recognize gets 1600
+MHz. It is set once, when the game opens; there is no option to change it.
+
 ## Changelog
 
-- **v1.3.1** - The in-game Quick Guide now shows the v1.3.0 controls (Select as Esc, Menu key as
+- **v1.3.1** - The CPU clock is now set automatically for the device model: 1800 MHz on the
+  Miyoo Mini Plus and 1600 MHz on the other Mini models, which do not hold 1800 MHz. The in-game
+  Quick Guide now shows the v1.3.0 controls (Select as Esc, Menu key as
   the Game Switcher). Fixed cancelling a text entry (character name, save names): the Menu key
   and a quick click on Select now both cancel it, as the README already said. This release also
   carries everything from v1.3.0, which was released just before it: OnionOS Game Switcher
