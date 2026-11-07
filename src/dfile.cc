@@ -1,9 +1,17 @@
 #include "dfile.h"
 
 #include <assert.h>
+#include <ctype.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+#if defined(__unix__) || defined(__APPLE__)
+#include <sys/stat.h>
+#define DFILE_INDEX_CACHE 1
+#endif
 
 #include <algorithm>
 
@@ -13,8 +21,54 @@
 
 namespace fallout {
 
+void miyooBootLog(const char* tag); // TEMP-BOOTLOG
+
+// TEMP-BOOTLOG: total time spent matching file name patterns in the archives.
+double gMiyooFindMs = 0;
+int gMiyooFindCalls = 0;
+struct MiyooFindTimer {
+    struct timespec a;
+    MiyooFindTimer() { clock_gettime(CLOCK_MONOTONIC, &a); }
+    ~MiyooFindTimer()
+    {
+        struct timespec b;
+        clock_gettime(CLOCK_MONOTONIC, &b);
+        gMiyooFindMs += (b.tv_sec - a.tv_sec) * 1000.0 + (b.tv_nsec - a.tv_nsec) / 1e6;
+        gMiyooFindCalls++;
+    }
+};
+
+// TEMP-BOOTLOG: wall time spent opening entries and reading compressed data.
+double gMiyooOpenMs = 0;
+int gMiyooOpenCalls = 0;
+double gMiyooReadMs = 0;
+int gMiyooReadCalls = 0;
+int gMiyooOpenMiss = 0;
+struct MiyooAccTimer {
+    struct timespec a;
+    double* ms;
+    int* n;
+    MiyooAccTimer(double* m, int* c)
+        : ms(m)
+        , n(c)
+    {
+        clock_gettime(CLOCK_MONOTONIC, &a);
+    }
+    ~MiyooAccTimer()
+    {
+        struct timespec b;
+        clock_gettime(CLOCK_MONOTONIC, &b);
+        *ms += (b.tv_sec - a.tv_sec) * 1000.0 + (b.tv_nsec - a.tv_nsec) / 1e6;
+        (*n)++;
+    }
+};
+
 // The size of decompression buffer for reading compressed [DFile]s.
 #define DFILE_DECOMPRESSION_BUFFER_SIZE (0x1000)
+
+// Miyoo Mini: the size of the read-ahead buffer with decompressed data, which
+// lives right after the decompression buffer in the same allocation.
+#define DFILE_OUT_BUFFER_SIZE (0x1000)
 
 // Specifies that [DFile] has unget character.
 //
@@ -54,6 +108,230 @@ static int dfileReadCharInternal(DFile* stream);
 static bool dfileReadCompressed(DFile* stream, void* ptr, size_t size);
 static void dfileUngetCompressed(DFile* stream, int ch);
 
+// Miyoo Mini: the entries table of a .DAT sits at the very end of the file.
+// On a FAT SD card with a cold cache, reaching the end of a large file means
+// walking its whole cluster chain, which costs seconds at startup. The raw
+// table is therefore saved next to the .DAT in a small "<name>.miyoo.idx"
+// file (validated by the .DAT size and modification time) and read from
+// there on the next runs.
+struct DatTable {
+    int entriesDataSize;
+    int dbaseDataSize;
+    int entriesLength;
+    int fileSize;
+    unsigned char* data;
+    size_t size;
+};
+
+#ifdef DFILE_INDEX_CACHE
+struct DatIndexCacheHeader {
+    uint32_t magic;
+    uint32_t version;
+    int64_t fileSize;
+    int64_t mtime;
+    int32_t entriesDataSize;
+    int32_t dbaseDataSize;
+    int32_t entriesLength;
+    uint32_t tableSize;
+};
+
+#define DAT_INDEX_CACHE_MAGIC (0x58444D59)
+#define DAT_INDEX_CACHE_VERSION (1)
+#define DAT_INDEX_CACHE_MAX_TABLE_SIZE (64 * 1024 * 1024)
+#endif
+
+#ifdef DFILE_INDEX_CACHE
+static bool dbaseCacheStat(const char* filePath, struct stat* st, char* cachePath, size_t cachePathSize)
+{
+    return stat(filePath, st) == 0
+        && snprintf(cachePath, cachePathSize, "%s.miyoo.idx", filePath) < (int)cachePathSize;
+}
+#endif
+
+// Loads the table of [filePath] from its index cache, without touching the
+// .DAT itself. Returns false when there is no valid cache.
+static bool dbaseLoadCachedDatTable(const char* filePath, DatTable* table)
+{
+    memset(table, 0, sizeof(*table));
+
+#ifdef DFILE_INDEX_CACHE
+    char cachePath[COMPAT_MAX_PATH + 16];
+    struct stat st;
+    if (dbaseCacheStat(filePath, &st, cachePath, sizeof(cachePath))) {
+        FILE* cache = fopen(cachePath, "rb");
+        if (cache != nullptr) {
+            DatIndexCacheHeader header;
+            if (fread(&header, sizeof(header), 1, cache) == 1
+                && header.magic == DAT_INDEX_CACHE_MAGIC
+                && header.version == DAT_INDEX_CACHE_VERSION
+                && header.fileSize == static_cast<int64_t>(st.st_size)
+                && header.mtime == static_cast<int64_t>(st.st_mtime)
+                && header.tableSize <= DAT_INDEX_CACHE_MAX_TABLE_SIZE) {
+                unsigned char* data = (unsigned char*)malloc(header.tableSize != 0 ? header.tableSize : 1);
+                if (data != nullptr) {
+                    if (fread(data, 1, header.tableSize, cache) == header.tableSize) {
+                        fclose(cache);
+                        table->fileSize = static_cast<int>(st.st_size);
+                        table->entriesDataSize = header.entriesDataSize;
+                        table->dbaseDataSize = header.dbaseDataSize;
+                        table->entriesLength = header.entriesLength;
+                        table->data = data;
+                        table->size = header.tableSize;
+                        return true;
+                    }
+                    free(data);
+                }
+            }
+            fclose(cache);
+        }
+    }
+#endif
+
+    return false;
+}
+
+// Reads the footer and the entries table from the .DAT and saves them into
+// the index cache.
+static bool dbaseReadDatTable(const char* filePath, FILE* stream, int fileSize, DatTable* table)
+{
+    memset(table, 0, sizeof(*table));
+    table->fileSize = fileSize;
+
+    // DAT format: parse footer, which contains two 32-bit ints.
+    if (fseek(stream, fileSize - sizeof(int) * 2, SEEK_SET) != 0) {
+        return false;
+    }
+
+    // The size of entries table.
+    if (fread(&(table->entriesDataSize), sizeof(table->entriesDataSize), 1, stream) != 1) {
+        return false;
+    }
+
+    // The size of entire dbase content.
+    //
+    // NOTE: It appears that this approach allows existence of arbitrary data in
+    // the beginning of the .DAT file.
+    if (fread(&(table->dbaseDataSize), sizeof(table->dbaseDataSize), 1, stream) != 1) {
+        return false;
+    }
+
+    // Reposition stream to the beginning of the entries table.
+    if (fseek(stream, fileSize - table->entriesDataSize - sizeof(int) * 2, SEEK_SET) != 0) {
+        return false;
+    }
+
+    if (fread(&(table->entriesLength), sizeof(table->entriesLength), 1, stream) != 1) {
+        return false;
+    }
+
+    // Read the rest of the table with one big read.
+    table->size = table->entriesDataSize > static_cast<int>(sizeof(int)) ? static_cast<size_t>(table->entriesDataSize) - sizeof(int) : 0;
+    table->data = (unsigned char*)malloc(table->size != 0 ? table->size : 1);
+    if (table->data == nullptr) {
+        return false;
+    }
+
+    if (fread(table->data, 1, table->size, stream) != table->size) {
+        free(table->data);
+        table->data = nullptr;
+        return false;
+    }
+
+#ifdef DFILE_INDEX_CACHE
+    char cachePath[COMPAT_MAX_PATH + 16];
+    struct stat st;
+    if (dbaseCacheStat(filePath, &st, cachePath, sizeof(cachePath))
+        && st.st_size == fileSize
+        && table->size <= DAT_INDEX_CACHE_MAX_TABLE_SIZE) {
+        char tempPath[COMPAT_MAX_PATH + 32];
+        snprintf(tempPath, sizeof(tempPath), "%s.tmp", cachePath);
+
+        FILE* cache = fopen(tempPath, "wb");
+        if (cache != nullptr) {
+            DatIndexCacheHeader header;
+            memset(&header, 0, sizeof(header));
+            header.magic = DAT_INDEX_CACHE_MAGIC;
+            header.version = DAT_INDEX_CACHE_VERSION;
+            header.fileSize = static_cast<int64_t>(st.st_size);
+            header.mtime = static_cast<int64_t>(st.st_mtime);
+            header.entriesDataSize = table->entriesDataSize;
+            header.dbaseDataSize = table->dbaseDataSize;
+            header.entriesLength = table->entriesLength;
+            header.tableSize = static_cast<uint32_t>(table->size);
+
+            bool ok = fwrite(&header, sizeof(header), 1, cache) == 1
+                && fwrite(table->data, 1, table->size, cache) == table->size;
+            if (fclose(cache) != 0) {
+                ok = false;
+            }
+
+            if (ok) {
+                rename(tempPath, cachePath);
+            } else {
+                remove(tempPath);
+            }
+        }
+    }
+#endif
+
+    return true;
+}
+
+// Miyoo Mini: hash of a path ignoring case, for [missFilter].
+static unsigned int dbaseHashPath(const char* path)
+{
+    unsigned int hash = 2166136261u;
+    for (; *path != '\0'; path++) {
+        hash ^= static_cast<unsigned int>(tolower(static_cast<unsigned char>(*path)));
+        hash *= 16777619u;
+    }
+    return hash ^ (hash >> 15);
+}
+
+static void dbaseBuildMissFilter(DBase* dbase)
+{
+    unsigned int bits = 1024;
+    while (bits < static_cast<unsigned int>(dbase->entriesLength) * 16u && bits < (1u << 30)) {
+        bits <<= 1;
+    }
+
+    unsigned char* filter = static_cast<unsigned char*>(calloc(bits / 8, 1));
+    if (filter == nullptr) {
+        return;
+    }
+
+    unsigned int mask = bits - 1;
+    for (int index = 0; index < dbase->entriesLength; index++) {
+        unsigned int bit = dbaseHashPath(dbase->entries[index].path) & mask;
+        filter[bit >> 3] |= static_cast<unsigned char>(1u << (bit & 7));
+    }
+
+    dbase->missFilter = filter;
+    dbase->missFilterMask = mask;
+}
+
+// Miyoo Mini: stream of the .DAT for a new handle, reusing the spare one.
+static FILE* dbaseAcquireStream(DBase* dbase)
+{
+    FILE* stream = dbase->spareStream;
+    if (stream != nullptr) {
+        dbase->spareStream = nullptr;
+        clearerr(stream);
+        return stream;
+    }
+
+    return compat_fopen(dbase->path, "rb");
+}
+
+static void dbaseReleaseStream(DBase* dbase, FILE* stream)
+{
+    if (dbase->spareStream == nullptr) {
+        dbase->spareStream = stream;
+    } else {
+        fclose(stream);
+    }
+}
+
 // Reads .DAT or .ZIP file contents.
 //
 // 0x4E4F58 dbase_open
@@ -66,7 +344,16 @@ DBase* dbaseOpen(const char* filePath, int* errorFlags)
         return nullptr;
     }
 
-    ZipSignature zipStatus = dbaseCheckZipSignature(stream);
+    {
+        char tag[300];
+        snprintf(tag, sizeof(tag), "dbaseOpen start %s", filePath);
+        miyooBootLog(tag);
+    }
+    // Miyoo Mini: with a valid index cache the .DAT is not touched at all.
+    DatTable datTable;
+    bool cached = dbaseLoadCachedDatTable(filePath, &datTable);
+
+    ZipSignature zipStatus = cached ? ZipSignature::NOT_ZIP : dbaseCheckZipSignature(stream);
     if (zipStatus == ZipSignature::EMPTY) {
         if (errorFlags) {
             *errorFlags = DBASE_ERROR_EMPTY;
@@ -77,6 +364,7 @@ DBase* dbaseOpen(const char* filePath, int* errorFlags)
 
     DBase* dbase = (DBase*)malloc(sizeof(*dbase));
     if (dbase == nullptr) {
+        free(datTable.data);
         fclose(stream);
         return nullptr;
     }
@@ -98,40 +386,23 @@ DBase* dbaseOpen(const char* filePath, int* errorFlags)
             return nullptr;
         }
 
+        dbaseBuildMissFilter(dbase);
+
         fclose(stream);
         return dbase;
     }
 
     dbase->format = DBaseFormat::DAT;
 
-    // DAT format: parse footer.
-    // Reposition stream to read footer, which contains two 32-bit ints.
-    int fileSize = getFileSize(stream);
-    if (fseek(stream, fileSize - sizeof(int) * 2, SEEK_SET) != 0) {
+    // DAT format: footer and entries table (possibly from the Miyoo index
+    // cache, see [dbaseReadDatTable]).
+    int fileSize = cached ? datTable.fileSize : getFileSize(stream);
+    if (!cached && !dbaseReadDatTable(filePath, stream, fileSize, &datTable)) {
         goto err;
     }
 
-    // Read the size of entries table.
-    int entriesDataSize;
-    if (fread(&entriesDataSize, sizeof(entriesDataSize), 1, stream) != 1) {
-        goto err;
-    }
-
-    // Read the size of entire dbase content.
-    //
-    // NOTE: It appears that this approach allows existence of arbitrary data in
-    // the beginning of the .DAT file.
-    int dbaseDataSize;
-    if (fread(&dbaseDataSize, sizeof(dbaseDataSize), 1, stream) != 1) {
-        goto err;
-    }
-
-    // Reposition stream to the beginning of the entries table.
-    if (fseek(stream, fileSize - entriesDataSize - sizeof(int) * 2, SEEK_SET) != 0) {
-        goto err;
-    }
-
-    if (fread(&(dbase->entriesLength), sizeof(dbase->entriesLength), 1, stream) != 1) {
+    dbase->entriesLength = datTable.entriesLength;
+    if (dbase->entriesLength < 0) {
         goto err;
     }
 
@@ -142,43 +413,56 @@ DBase* dbaseOpen(const char* filePath, int* errorFlags)
 
     memset(dbase->entries, 0, sizeof(*dbase->entries) * dbase->entriesLength);
 
-    // Read entries one by one, stopping on any error.
+    miyooBootLog("  table: loaded, parsing"); // TEMP-BOOTLOG
+
+    // Parse the entries table from memory.
     int entryIndex;
-    for (entryIndex = 0; entryIndex < dbase->entriesLength; entryIndex++) {
-        DBaseEntry* entry = &(dbase->entries[entryIndex]);
+    entryIndex = 0;
+    {
+        const unsigned char* cursor = datTable.data;
+        const unsigned char* tableEnd = datTable.data + datTable.size;
 
-        int pathLength;
-        if (fread(&pathLength, sizeof(pathLength), 1, stream) != 1) {
-            break;
+        for (entryIndex = 0; entryIndex < dbase->entriesLength; entryIndex++) {
+            DBaseEntry* entry = &(dbase->entries[entryIndex]);
+
+            int pathLength;
+            if (tableEnd - cursor < (ptrdiff_t)sizeof(pathLength)) {
+                break;
+            }
+            memcpy(&pathLength, cursor, sizeof(pathLength));
+            cursor += sizeof(pathLength);
+
+            size_t fieldsSize = sizeof(entry->compressed) + sizeof(entry->uncompressedSize) + sizeof(entry->dataSize) + sizeof(entry->dataOffset);
+            if (pathLength < 0 || (size_t)(tableEnd - cursor) < (size_t)pathLength + fieldsSize) {
+                break;
+            }
+
+            entry->path = (char*)malloc(pathLength + 1);
+            if (entry->path == nullptr) {
+                break;
+            }
+
+            memcpy(entry->path, cursor, pathLength);
+            entry->path[pathLength] = '\0';
+            cursor += pathLength;
+
+            memcpy(&(entry->compressed), cursor, sizeof(entry->compressed));
+            cursor += sizeof(entry->compressed);
+
+            memcpy(&(entry->uncompressedSize), cursor, sizeof(entry->uncompressedSize));
+            cursor += sizeof(entry->uncompressedSize);
+
+            memcpy(&(entry->dataSize), cursor, sizeof(entry->dataSize));
+            cursor += sizeof(entry->dataSize);
+
+            memcpy(&(entry->dataOffset), cursor, sizeof(entry->dataOffset));
+            cursor += sizeof(entry->dataOffset);
         }
 
-        entry->path = (char*)malloc(pathLength + 1);
-        if (entry->path == nullptr) {
-            break;
-        }
-
-        if (fread(entry->path, pathLength, 1, stream) != 1) {
-            break;
-        }
-
-        entry->path[pathLength] = '\0';
-
-        if (fread(&(entry->compressed), sizeof(entry->compressed), 1, stream) != 1) {
-            break;
-        }
-
-        if (fread(&(entry->uncompressedSize), sizeof(entry->uncompressedSize), 1, stream) != 1) {
-            break;
-        }
-
-        if (fread(&(entry->dataSize), sizeof(entry->dataSize), 1, stream) != 1) {
-            break;
-        }
-
-        if (fread(&(entry->dataOffset), sizeof(entry->dataOffset), 1, stream) != 1) {
-            break;
-        }
     }
+
+    free(datTable.data);
+    datTable.data = nullptr;
 
     if (entryIndex < dbase->entriesLength) {
         // We haven't reached the end, which means there was an error while
@@ -187,13 +471,22 @@ DBase* dbaseOpen(const char* filePath, int* errorFlags)
     }
 
     dbase->path = compat_strdup(filePath);
-    dbase->dataOffset = fileSize - dbaseDataSize;
+    dbase->dataOffset = fileSize - datTable.dbaseDataSize;
+    {
+        char tag[300];
+        snprintf(tag, sizeof(tag), "dbaseOpen done  %s entries=%d tableBytes=%d", filePath, dbase->entriesLength, datTable.entriesDataSize);
+        miyooBootLog(tag);
+    }
+
+    dbaseBuildMissFilter(dbase);
 
     fclose(stream);
 
     return dbase;
 
 err:
+
+    free(datTable.data);
 
     dbaseClose(dbase);
 
@@ -228,6 +521,12 @@ bool dbaseClose(DBase* dbase)
         free(dbase->entries);
     }
 
+    if (dbase->spareStream != nullptr) {
+        fclose(dbase->spareStream);
+    }
+
+    free(dbase->missFilter);
+
     if (dbase->path != nullptr) {
         free(dbase->path);
     }
@@ -239,12 +538,55 @@ bool dbaseClose(DBase* dbase)
     return true;
 }
 
+// Miyoo Mini: the entries are sorted by path ignoring case, so the ones that
+// match a pattern start at the first entry whose path begins with the fixed
+// text of the pattern (everything before its first wildcard) and end where
+// that text stops matching. This avoids matching the pattern against every
+// entry of a big archive for each search.
+static size_t dbasePatternPrefixLength(const char* pattern)
+{
+    return strcspn(pattern, "*?[");
+}
+
+static int dbasePrefixCompare(const char* path, const char* prefix, size_t length)
+{
+    for (size_t i = 0; i < length; i++) {
+        int a = tolower(static_cast<unsigned char>(path[i]));
+        int b = tolower(static_cast<unsigned char>(prefix[i]));
+        if (a != b) {
+            return a - b;
+        }
+    }
+
+    return 0;
+}
+
 // 0x4E5308 dbase_findfirst
 bool dbaseFindFirstEntry(DBase* dbase, DFileFindData* findFileData, const char* pattern)
 {
+    MiyooFindTimer miyooFindTimer;
+    size_t prefixLength = dbasePatternPrefixLength(pattern);
+
+    int start = 0;
+    if (prefixLength != 0) {
+        int high = dbase->entriesLength;
+        while (start < high) {
+            int mid = start + (high - start) / 2;
+            if (dbasePrefixCompare(dbase->entries[mid].path, pattern, prefixLength) < 0) {
+                start = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+    }
+
     // .dat files always have windows style paths
-    for (int index = 0; index < dbase->entriesLength; index++) {
+    for (int index = start; index < dbase->entriesLength; index++) {
         DBaseEntry* entry = &(dbase->entries[index]);
+        if (prefixLength != 0 && dbasePrefixCompare(entry->path, pattern, prefixLength) != 0) {
+            break;
+        }
+
         if (fpattern_windows_match(pattern, entry->path)) {
             strcpy(findFileData->fileName, entry->path);
             strcpy(findFileData->pattern, pattern);
@@ -259,8 +601,14 @@ bool dbaseFindFirstEntry(DBase* dbase, DFileFindData* findFileData, const char* 
 // 0x4E53A0 dbase_findnext
 bool dbaseFindNextEntry(DBase* dbase, DFileFindData* findFileData)
 {
+    MiyooFindTimer miyooFindTimer;
+    size_t prefixLength = dbasePatternPrefixLength(findFileData->pattern);
     for (int index = findFileData->index + 1; index < dbase->entriesLength; index++) {
         DBaseEntry* entry = &(dbase->entries[index]);
+        if (prefixLength != 0 && dbasePrefixCompare(entry->path, findFileData->pattern, prefixLength) != 0) {
+            break;
+        }
+
         if (fpattern_windows_match(findFileData->pattern, entry->path)) {
             strcpy(findFileData->fileName, entry->path);
             findFileData->index = index;
@@ -309,7 +657,7 @@ int dfileClose(DFile* stream)
     }
 
     if (stream->stream != nullptr) {
-        fclose(stream->stream);
+        dbaseReleaseStream(stream->dbase, stream->stream);
     }
 
     // Loop thru open file handles and find previous to remove current handle
@@ -416,15 +764,51 @@ char* dfileReadString(char* string, int size, DFile* stream)
         stream->flags &= ~DFILE_HAS_UNGETC;
     }
 
-    // Read up to size - 1 characters one by one saving space for the null
-    // terminator.
-    for (int index = 0; index < size - 1; index++) {
+    // Read up to size - 1 characters saving space for the null terminator.
+    for (int index = 0; index < size - 1;) {
+        if (stream->entry->compressed == 1
+            && (stream->flags & DFILE_HAS_COMPRESSED_UNGETC) == 0
+            && stream->outLen > stream->outPos) {
+            // Miyoo Mini: copy whole runs of characters straight from the
+            // decompressed read-ahead buffer. A '\r' of a text stream (which
+            // needs the next character too) is left to the single character
+            // path below.
+            const unsigned char* outBuffer = stream->decompressionBuffer + DFILE_DECOMPRESSION_BUFFER_SIZE;
+            int limit = std::min(size - 1 - index, stream->outLen - stream->outPos);
+            bool isText = (stream->flags & DFILE_TEXT) != 0;
+            bool lineEnded = false;
+            int count = 0;
+            while (count < limit) {
+                unsigned char c = outBuffer[stream->outPos + count];
+                if (c == '\r' && isText) {
+                    break;
+                }
+
+                *pch++ = c;
+                count++;
+
+                if (c == '\n') {
+                    lineEnded = true;
+                    break;
+                }
+            }
+
+            stream->outPos += count;
+            stream->position += count;
+            index += count;
+
+            if (lineEnded || index >= size - 1) {
+                break;
+            }
+        }
+
         int ch = dfileReadCharInternal(stream);
         if (ch == -1) {
             break;
         }
 
         *pch++ = ch & 0xFF;
+        index++;
 
         if (ch == '\n') {
             break;
@@ -628,6 +1012,8 @@ int dfileSeek(DFile* stream, long offset, int origin)
 
     stream->position = 0;
     stream->compressedBytesRead = 0;
+    stream->outPos = 0;
+    stream->outLen = 0;
     stream->flags &= ~(DFILE_HAS_UNGETC | DFILE_EOF);
 
     return 0;
@@ -933,8 +1319,19 @@ static bool dbaseParseZip(DBase* dbase, FILE* stream, int& errorFlags)
 // 0x4E5D9C dfile_fopen_helper
 static DFile* dfileOpenInternal(DBase* dbase, const char* filePath, const char* mode, DFile* dfile)
 {
-    DBaseEntry* entry = (DBaseEntry*)bsearch(filePath, dbase->entries, dbase->entriesLength, sizeof(*dbase->entries), dbaseFindEntryByFilePath);
+    MiyooAccTimer miyooOpenTimer(&gMiyooOpenMs, &gMiyooOpenCalls); // TEMP-BOOTLOG
+    DBaseEntry* entry = nullptr;
+    if (dbase->missFilter != nullptr) {
+        unsigned int bit = dbaseHashPath(filePath) & dbase->missFilterMask;
+        if ((dbase->missFilter[bit >> 3] & (1u << (bit & 7))) == 0) {
+            gMiyooOpenMiss++; // TEMP-BOOTLOG
+            goto err;
+        }
+    }
+
+    entry = (DBaseEntry*)bsearch(filePath, dbase->entries, dbase->entriesLength, sizeof(*dbase->entries), dbaseFindEntryByFilePath);
     if (entry == nullptr) {
+        gMiyooOpenMiss++; // TEMP-BOOTLOG
         goto err;
     }
 
@@ -958,11 +1355,13 @@ static DFile* dfileOpenInternal(DBase* dbase, const char* filePath, const char* 
         }
 
         if (dfile->stream != nullptr) {
-            fclose(dfile->stream);
+            dbaseReleaseStream(dbase, dfile->stream);
             dfile->stream = nullptr;
         }
 
         dfile->compressedBytesRead = 0;
+        dfile->outPos = 0;
+        dfile->outLen = 0;
         dfile->position = 0;
         dfile->flags = 0;
     }
@@ -970,7 +1369,7 @@ static DFile* dfileOpenInternal(DBase* dbase, const char* filePath, const char* 
     dfile->entry = entry;
 
     // Open stream to .DAT file.
-    dfile->stream = compat_fopen(dbase->path, "rb");
+    dfile->stream = dbaseAcquireStream(dbase);
     if (dfile->stream == nullptr) {
         goto err;
     }
@@ -991,7 +1390,7 @@ static DFile* dfileOpenInternal(DBase* dbase, const char* filePath, const char* 
                 goto err;
             }
 
-            dfile->decompressionBuffer = (unsigned char*)malloc(DFILE_DECOMPRESSION_BUFFER_SIZE);
+            dfile->decompressionBuffer = (unsigned char*)malloc(DFILE_DECOMPRESSION_BUFFER_SIZE + DFILE_OUT_BUFFER_SIZE);
             if (dfile->decompressionBuffer == nullptr) {
                 goto err;
             }
@@ -1086,6 +1485,44 @@ static int dfileReadCharInternal(DFile* stream)
     return ch;
 }
 
+// Miyoo Mini: inflates up to [size] bytes into [dest] and returns how many
+// bytes were produced. It is less than [size] only at the end of the
+// compressed stream or when there was an error.
+static size_t dfileInflate(DFile* stream, unsigned char* dest, size_t size)
+{
+    z_streamp zs = stream->decompressionStream;
+    zs->next_out = dest;
+    zs->avail_out = size;
+
+    do {
+        if (zs->avail_out == 0) {
+            // Everything was decompressed.
+            break;
+        }
+
+        if (zs->avail_in == 0) {
+            // No more unprocessed data, request next chunk.
+            size_t bytesToRead = std::min(DFILE_DECOMPRESSION_BUFFER_SIZE, stream->entry->dataSize - stream->compressedBytesRead);
+
+            bool miyooReadOk; // TEMP-BOOTLOG
+            {
+                MiyooAccTimer miyooReadTimer(&gMiyooReadMs, &gMiyooReadCalls);
+                miyooReadOk = fread(stream->decompressionBuffer, bytesToRead, 1, stream->stream) == 1;
+            }
+            if (!miyooReadOk) {
+                break;
+            }
+
+            zs->avail_in = bytesToRead;
+            zs->next_in = stream->decompressionBuffer;
+
+            stream->compressedBytesRead += bytesToRead;
+        }
+    } while (inflate(zs, Z_NO_FLUSH) == Z_OK);
+
+    return size - zs->avail_out;
+}
+
 // 0x4E6078 dfile_read_comp_bytes
 static bool dfileReadCompressed(DFile* stream, void* ptr, size_t size)
 {
@@ -1104,34 +1541,42 @@ static bool dfileReadCompressed(DFile* stream, void* ptr, size_t size)
         }
     }
 
-    stream->decompressionStream->next_out = (Bytef*)ptr;
-    stream->decompressionStream->avail_out = size;
+    unsigned char* outBuffer = stream->decompressionBuffer + DFILE_DECOMPRESSION_BUFFER_SIZE;
+    unsigned char* dest = static_cast<unsigned char*>(ptr);
+    size_t remaining = size;
 
-    do {
-        if (stream->decompressionStream->avail_out == 0) {
-            // Everything was decompressed.
+    while (remaining != 0) {
+        int available = stream->outLen - stream->outPos;
+        if (available > 0) {
+            // Serve from the decompressed read-ahead buffer.
+            size_t count = std::min(remaining, static_cast<size_t>(available));
+            memcpy(dest, outBuffer + stream->outPos, count);
+            stream->outPos += static_cast<int>(count);
+            dest += count;
+            remaining -= count;
+            continue;
+        }
+
+        if (remaining >= DFILE_OUT_BUFFER_SIZE) {
+            // Big read: decompress straight into the destination.
+            size_t produced = dfileInflate(stream, dest, remaining);
+            dest += produced;
+            remaining -= produced;
+            if (remaining != 0) {
+                // There are some data still waiting, which means there was
+                // an error during decompression.
+                return false;
+            }
             break;
         }
 
-        if (stream->decompressionStream->avail_in == 0) {
-            // No more unprocessed data, request next chunk.
-            size_t bytesToRead = std::min(DFILE_DECOMPRESSION_BUFFER_SIZE, stream->entry->dataSize - stream->compressedBytesRead);
-
-            if (fread(stream->decompressionBuffer, bytesToRead, 1, stream->stream) != 1) {
-                break;
-            }
-
-            stream->decompressionStream->avail_in = bytesToRead;
-            stream->decompressionStream->next_in = stream->decompressionBuffer;
-
-            stream->compressedBytesRead += bytesToRead;
+        // Small read: decompress a whole chunk ahead.
+        size_t produced = dfileInflate(stream, outBuffer, DFILE_OUT_BUFFER_SIZE);
+        stream->outPos = 0;
+        stream->outLen = static_cast<int>(produced);
+        if (produced == 0) {
+            return false;
         }
-    } while (inflate(stream->decompressionStream, Z_NO_FLUSH) == Z_OK);
-
-    if (stream->decompressionStream->avail_out != 0) {
-        // There are some data still waiting, which means there was in error
-        // during decompression loop above.
-        return false;
     }
 
     stream->position += size;

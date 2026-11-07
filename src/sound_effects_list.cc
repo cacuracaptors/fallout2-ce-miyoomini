@@ -25,7 +25,8 @@ static void soundEffectsListClear();
 static void soundEffectsListReset();
 static int soundEffectsListPopulateFileNames();
 static int soundEffectsListCopyFileNames(char** fileNameList);
-static int soundEffectsListPopulateFileSizes();
+static int soundEffectsListPopulateFileSizes(int first, int last);
+static int soundEffectsListEnsureSizes(SoundEffectsListEntry* entry);
 static int soundEffectsListSort();
 static int soundEffectsListCompareByName(const void* a, const void* b);
 static int soundEffectsListSoundDecoderReadHandler(void* data, void* buf, unsigned int size);
@@ -86,11 +87,10 @@ int soundEffectsListInit(const char* soundEffectsPath, int compression, int debu
         return err;
     }
 
-    err = soundEffectsListPopulateFileSizes();
-    if (err != SFXL_OK) {
-        soundEffectsListReset();
-        return err;
-    }
+    // Miyoo Mini: the file sizes of the ~1900 sound effects are NOT read
+    // here anymore (it opened every one of them at startup, which is very
+    // slow on the SD card). Each entry gets its sizes the first time it is
+    // needed, see [soundEffectsListEnsureSizes].
 
     soundEffectsListSort();
 
@@ -176,6 +176,10 @@ int soundEffectsListGetDataSize(int tag, int* sizePtr)
     }
 
     SoundEffectsListEntry* entry = &(gSoundEffectsListEntries[index]);
+    rc = soundEffectsListEnsureSizes(entry);
+    if (rc != SFXL_OK) {
+        return rc;
+    }
     *sizePtr = entry->dataSize;
 
     return SFXL_OK;
@@ -191,6 +195,10 @@ int soundEffectsListGetFileSize(int tag, int* sizePtr)
     }
 
     SoundEffectsListEntry* entry = &(gSoundEffectsListEntries[index]);
+    err = soundEffectsListEnsureSizes(entry);
+    if (err != SFXL_OK) {
+        return err;
+    }
     *sizePtr = entry->fileSize;
 
     return SFXL_OK;
@@ -332,7 +340,7 @@ static int soundEffectsListCopyFileNames(char** fileNameList)
 }
 
 // 0x4AA050 sfxl_get_sizes
-static int soundEffectsListPopulateFileSizes()
+static int soundEffectsListPopulateFileSizes(int first, int last)
 {
 
     char* path = (char*)internal_malloc(gSoundEffectsListPathLength + COMPAT_MAX_PATH);
@@ -344,7 +352,7 @@ static int soundEffectsListPopulateFileSizes()
 
     char* fileName = path + gSoundEffectsListPathLength;
 
-    for (int index = 0; index < gSoundEffectsListEntriesLength; index++) {
+    for (int index = first; index < last; index++) {
         SoundEffectsListEntry* entry = &(gSoundEffectsListEntries[index]);
         strcpy(fileName, entry->name);
 
@@ -398,6 +406,22 @@ static int soundEffectsListPopulateFileSizes()
     internal_free(path);
 
     return SFXL_OK;
+}
+
+// Miyoo Mini: reads the sizes of one entry the first time they are needed.
+static int soundEffectsListEnsureSizes(SoundEffectsListEntry* entry)
+{
+    if (entry->fileSize > 0) {
+        return SFXL_OK;
+    }
+
+    int index = static_cast<int>(entry - gSoundEffectsListEntries);
+    int err = soundEffectsListPopulateFileSizes(index, index + 1);
+    if (err != SFXL_OK) {
+        entry->fileSize = 0;
+    }
+
+    return err;
 }
 
 // NOTE: Inlined.

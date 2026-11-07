@@ -106,8 +106,91 @@ static void writeResumeFlag(const char* state)
     writeWholeFile(kResumeFlagFile, state, strlen(state));
 }
 
+static const char* const kGovernorPath = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor";
+static const char* const kGovernorsPath = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors";
+
+static int gBoostDepth = 0;
+static bool gBoostActive = false;
+static char gBoostOriginal[32];
+
+static bool readSysfs(const char* path, char* buffer, size_t size)
+{
+    FILE* stream = fopen(path, "r");
+    if (stream == nullptr) {
+        return false;
+    }
+    size_t length = fread(buffer, 1, size - 1, stream);
+    fclose(stream);
+    buffer[length] = '\0';
+    while (length > 0 && (buffer[length - 1] == '\n' || buffer[length - 1] == ' ')) {
+        buffer[--length] = '\0';
+    }
+    return length > 0;
+}
+
+static bool writeSysfs(const char* path, const char* value)
+{
+    FILE* stream = fopen(path, "w");
+    if (stream == nullptr) {
+        return false;
+    }
+    bool ok = fputs(value, stream) >= 0;
+    ok = (fclose(stream) == 0) && ok;
+    return ok;
+}
+
+static void boostRestore()
+{
+    if (gBoostActive) {
+        writeSysfs(kGovernorPath, gBoostOriginal);
+        gBoostActive = false;
+    }
+}
+
+void miyooBoostBegin()
+{
+    if (!gOnion) {
+        return;
+    }
+    gBoostDepth++;
+    if (gBoostActive) {
+        return;
+    }
+
+    char current[32];
+    char available[256];
+    if (!readSysfs(kGovernorPath, current, sizeof(current))
+        || !readSysfs(kGovernorsPath, available, sizeof(available))
+        || strstr(available, "performance") == nullptr
+        || strcmp(current, "performance") == 0) {
+        return;
+    }
+
+    strcpy(gBoostOriginal, current);
+    if (writeSysfs(kGovernorPath, "performance")) {
+        gBoostActive = true;
+    }
+}
+
+void miyooBoostEnd()
+{
+    if (!gOnion || gBoostDepth == 0) {
+        return;
+    }
+    if (--gBoostDepth == 0) {
+        boostRestore();
+    }
+}
+
+void miyooBoostReset()
+{
+    gBoostDepth = 0;
+    boostRestore();
+}
+
 static void cleanupAtExit()
 {
+    boostRestore();
     if (gPidPath[0] != '\0') {
         remove(gPidPath);
     }
@@ -170,6 +253,9 @@ void miyooShutdownInit(const char* executablePath)
     }
 
     gOnion = true;
+
+    // Loading boost for everything from here to the main menu.
+    miyooBoostBegin();
 
     // Should never happen (OnionOS deletes it at boot), but a leftover off
     // order must not close the game: then only SIGTERM counts.
@@ -265,6 +351,22 @@ bool miyooShutdownResumePending()
     writeResumeFlag("loading\n");
     gResumeInProgress = true;
     return true;
+}
+
+bool miyooShutdownResumeLikely()
+{
+    if (!gOnion || !fileExists(kResumeFlagFile)) {
+        return false;
+    }
+
+    char state[32] = { 0 };
+    FILE* stream = fopen(kResumeFlagFile, "rb");
+    if (stream != nullptr) {
+        fread(state, 1, sizeof(state) - 1, stream);
+        fclose(stream);
+    }
+
+    return strncmp(state, "resume", 6) == 0;
 }
 
 void miyooShutdownResumeFinished(bool loaded)
@@ -380,6 +482,11 @@ bool miyooShutdownResumePending()
     return false;
 }
 
+bool miyooShutdownResumeLikely()
+{
+    return false;
+}
+
 void miyooShutdownResumeFinished(bool loaded)
 {
     (void)loaded;
@@ -396,6 +503,18 @@ void miyooShutdownHandleInGame(MiyooShutdownSaveProc* save)
 }
 
 void miyooShutdownPoll()
+{
+}
+
+void miyooBoostBegin()
+{
+}
+
+void miyooBoostEnd()
+{
+}
+
+void miyooBoostReset()
 {
 }
 

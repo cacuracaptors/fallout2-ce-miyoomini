@@ -38,7 +38,10 @@ void paletteInit()
         colorPaletteSetTransitionCallback(soundContinueAll);
     }
 
-    constexpr int referenceFadeSteps = 60;
+    // Miyoo Mini: only used to measure the frame rate (so the fades last
+    // about 700 ms). 60 steps took over a second of black screen at startup;
+    // 15 are enough for the measurement.
+    constexpr int referenceFadeSteps = 15;
     colorPaletteFadeBetween(gPalette, gPalette, referenceFadeSteps);
 
     colorPaletteSetTransitionCallback(nullptr);

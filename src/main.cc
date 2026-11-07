@@ -81,8 +81,11 @@ static bool commandLineDevEndgame = false;
 static bool commandLineDevEndgameMovie = false;
 
 // 0x48099C
+void miyooBootLog(const char* tag); // TEMP-BOOTLOG
+
 int falloutMain(int argc, char** argv)
 {
+    miyooBootLog("falloutMain start");
     if (!autorunMutexCreate()) {
         return 1;
     }
@@ -90,6 +93,7 @@ int falloutMain(int argc, char** argv)
     if (!falloutInit(argc, argv)) {
         return 1;
     }
+    miyooBootLog("falloutInit done");
 
     mainParseCommandLineArguments(argc, argv);
 
@@ -106,10 +110,17 @@ int falloutMain(int argc, char** argv)
     } else {
         // If the splash is shown but opening movies are skipped, fade it out
         // before the main menu starts its normal fade-in.
-        paletteFadeTo(gPaletteBlack);
+        if (miyooResume) {
+            // Miyoo Mini: resuming the power-off save, no need to wait for a fade.
+            paletteSetEntries(gPaletteBlack);
+        } else {
+            paletteFadeTo(gPaletteBlack);
+        }
     }
 
+    miyooBootLog("intro/fade done");
     if (mainMenuWindowInit() == 0) {
+        miyooBootLog("mainMenuWindowInit");
         bool done = false;
         while (!done) {
             keyboardReset();
@@ -129,6 +140,7 @@ int falloutMain(int argc, char** argv)
                 commandLineDevLoadGameSlot = -1;
                 mainMenuRc = MAIN_MENU_LOAD_GAME;
             } else {
+                miyooBoostReset();
                 mainMenuRc = mainMenuWindowHandleEvents();
             }
             mouseHideCursor();
@@ -445,6 +457,8 @@ static void main_unload_new()
 // 0x480E48
 static void mainLoop()
 {
+    miyooBoostReset();
+    miyooBootLog("mainLoop start");
     bool cursorWasHidden = cursorIsHidden();
     if (cursorWasHidden) {
         mouseShowCursor();

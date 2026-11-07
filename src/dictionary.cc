@@ -131,10 +131,12 @@ static int dictionaryFindIndexForKey(Dictionary* dictionary, const char* key, in
             break;
         }
 
+        // Miyoo Mini: the original moved the bounds by one item instead of
+        // jumping to the middle, which made this a linear search.
         if (cmp > 0) {
-            l = l + 1;
+            l = mid + 1;
         } else {
-            r = r - 1;
+            r = mid - 1;
         }
     }
 
@@ -218,12 +220,11 @@ int dictionaryAddValue(Dictionary* dictionary, const char* key, const void* valu
         memcpy(valueCopy, value, dictionary->valueSize);
     }
 
-    // Starting at the end of entries array loop backwards and move entries down
-    // one by one until we reach insertion point.
-    for (int index = dictionary->entriesLength; index > newElementIndex; index--) {
-        DictionaryEntry* src = &(dictionary->entries[index - 1]);
-        DictionaryEntry* dest = &(dictionary->entries[index]);
-        memcpy(dest, src, sizeof(*dictionary->entries));
+    // Move entries down by one until we reach insertion point.
+    if (dictionary->entriesLength > newElementIndex) {
+        memmove(&(dictionary->entries[newElementIndex + 1]),
+            &(dictionary->entries[newElementIndex]),
+            sizeof(*dictionary->entries) * (dictionary->entriesLength - newElementIndex));
     }
 
     DictionaryEntry* entry = &(dictionary->entries[newElementIndex]);
@@ -262,12 +263,11 @@ int dictionaryRemoveValue(Dictionary* dictionary, const char* key)
 
     dictionary->entriesLength--;
 
-    // Starting from the index of the entry we've just removed, loop thru the
-    // remaining of the array and move entries up one by one.
-    for (int index = indexToRemove; index < dictionary->entriesLength; index++) {
-        DictionaryEntry* src = &(dictionary->entries[index + 1]);
-        DictionaryEntry* dest = &(dictionary->entries[index]);
-        memcpy(dest, src, sizeof(*dictionary->entries));
+    // Move the remaining entries up by one.
+    if (dictionary->entriesLength > indexToRemove) {
+        memmove(&(dictionary->entries[indexToRemove]),
+            &(dictionary->entries[indexToRemove + 1]),
+            sizeof(*dictionary->entries) * (dictionary->entriesLength - indexToRemove));
     }
 
     return 0;

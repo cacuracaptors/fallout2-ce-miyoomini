@@ -1,6 +1,7 @@
 #include "platform_compat.h"
 
 #include <string.h>
+#include <time.h> // TEMP-BOOTLOG
 
 #include <string>
 #include <unordered_map>
@@ -31,6 +32,18 @@
 #include <SDL.h>
 
 namespace fallout {
+
+// TEMP-BOOTLOG: wall time of directory listings and fopen calls.
+double gMiyooDirMs = 0;
+int gMiyooDirCalls = 0;
+double gMiyooFopenMs = 0;
+int gMiyooFopenCalls = 0;
+static double miyooNowMs()
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return t.tv_sec * 1000.0 + t.tv_nsec / 1e6;
+}
 
 static bool compatIsPathSeparator(char ch)
 {
@@ -63,6 +76,56 @@ static void compatDirectoryEntryCacheClear()
     compatDirectoryEntryCache.clear();
 }
 
+// Miyoo Mini: creating, removing or renaming one file only changes one entry
+// of one cached directory listing. Dropping the whole cache on every such
+// operation made the game list the same directories thousands of times while
+// loading a save. The cache key of a directory is the textual prefix of the
+// path up to its last separator ("." when there is none, "/" for the root).
+static bool compatDirectoryEntryCacheSplit(const char* nativePath, std::string& directoryPath, std::string& name)
+{
+    const char* sep = strrchr(nativePath, '/');
+    if (sep == nullptr) {
+        directoryPath = ".";
+        name = nativePath;
+    } else if (sep == nativePath) {
+        directoryPath = "/";
+        name = sep + 1;
+    } else {
+        directoryPath.assign(nativePath, sep - nativePath);
+        name = sep + 1;
+    }
+
+    return !name.empty();
+}
+
+static void compatDirectoryEntryCacheAdd(const char* nativePath)
+{
+    std::string directoryPath;
+    std::string name;
+    if (!compatDirectoryEntryCacheSplit(nativePath, directoryPath, name)) {
+        return;
+    }
+
+    auto directory = compatDirectoryEntryCache.find(directoryPath);
+    if (directory != compatDirectoryEntryCache.end()) {
+        directory->second.entries[compatLowercase(name)] = name;
+    }
+}
+
+static void compatDirectoryEntryCacheRemove(const char* nativePath)
+{
+    std::string directoryPath;
+    std::string name;
+    if (!compatDirectoryEntryCacheSplit(nativePath, directoryPath, name)) {
+        return;
+    }
+
+    auto directory = compatDirectoryEntryCache.find(directoryPath);
+    if (directory != compatDirectoryEntryCache.end()) {
+        directory->second.entries.erase(compatLowercase(name));
+    }
+}
+
 static const CompatDirectoryCacheEntry* compatDirectoryEntryCacheGet(const std::string& directoryPath)
 {
     auto existing = compatDirectoryEntryCache.find(directoryPath);
@@ -70,6 +133,7 @@ static const CompatDirectoryCacheEntry* compatDirectoryEntryCacheGet(const std::
         return &(existing->second);
     }
 
+    double miyooDirStart = miyooNowMs(); // TEMP-BOOTLOG
     DIR* dir = opendir(directoryPath.c_str());
     if (dir == nullptr) {
         return nullptr;
@@ -90,10 +154,21 @@ static const CompatDirectoryCacheEntry* compatDirectoryEntryCacheGet(const std::
 
     closedir(dir);
 
+    gMiyooDirMs += miyooNowMs() - miyooDirStart; // TEMP-BOOTLOG
+    gMiyooDirCalls++;
+
     return &cacheEntry;
 }
 #else
 static void compatDirectoryEntryCacheClear()
+{
+}
+
+static void compatDirectoryEntryCacheAdd(const char*)
+{
+}
+
+static void compatDirectoryEntryCacheRemove(const char*)
 {
 }
 #endif
@@ -377,15 +452,15 @@ unsigned int compat_timeGetTime()
 FILE* compat_fopen(const char* path, const char* mode)
 {
     bool mayWrite = compatFileModeMayWrite(mode);
-    if (mayWrite) {
-        compatDirectoryEntryCacheClear();
-    }
 
     char nativePath[COMPAT_MAX_PATH];
+    double miyooFopenStart = miyooNowMs(); // TEMP-BOOTLOG
     compat_prepare_native_path(nativePath, path);
     FILE* stream = fopen(nativePath, mode);
+    gMiyooFopenMs += miyooNowMs() - miyooFopenStart;
+    gMiyooFopenCalls++;
     if (mayWrite && stream != nullptr) {
-        compatDirectoryEntryCacheClear();
+        compatDirectoryEntryCacheAdd(nativePath);
     }
     return stream;
 }
@@ -393,15 +468,12 @@ FILE* compat_fopen(const char* path, const char* mode)
 gzFile compat_gzopen(const char* path, const char* mode)
 {
     bool mayWrite = compatFileModeMayWrite(mode);
-    if (mayWrite) {
-        compatDirectoryEntryCacheClear();
-    }
 
     char nativePath[COMPAT_MAX_PATH];
     compat_prepare_native_path(nativePath, path);
     gzFile stream = gzopen(nativePath, mode);
     if (mayWrite && stream != nullptr) {
-        compatDirectoryEntryCacheClear();
+        compatDirectoryEntryCacheAdd(nativePath);
     }
     return stream;
 }
@@ -438,21 +510,17 @@ char* compat_gzgets(gzFile stream, char* buffer, int maxCount)
 
 int compat_remove(const char* path)
 {
-    compatDirectoryEntryCacheClear();
-
     char nativePath[COMPAT_MAX_PATH];
     compat_prepare_native_path(nativePath, path);
     int rc = remove(nativePath);
     if (rc == 0) {
-        compatDirectoryEntryCacheClear();
+        compatDirectoryEntryCacheRemove(nativePath);
     }
     return rc;
 }
 
 int compat_rename(const char* oldFileName, const char* newFileName)
 {
-    compatDirectoryEntryCacheClear();
-
     char nativeOldFileName[COMPAT_MAX_PATH];
     compat_prepare_native_path(nativeOldFileName, oldFileName);
 
@@ -461,7 +529,8 @@ int compat_rename(const char* oldFileName, const char* newFileName)
 
     int rc = rename(nativeOldFileName, nativeNewFileName);
     if (rc == 0) {
-        compatDirectoryEntryCacheClear();
+        compatDirectoryEntryCacheRemove(nativeOldFileName);
+        compatDirectoryEntryCacheAdd(nativeNewFileName);
     }
     return rc;
 }

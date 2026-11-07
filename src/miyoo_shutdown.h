@@ -25,6 +25,10 @@ void miyooShutdownInit(const char* executablePath);
 // True once when the previous session was saved at power off and that save
 // should be loaded now. Call miyooShutdownResumeFinished() after the load.
 bool miyooShutdownResumePending();
+
+// Read-only check (no side effects): true when the next launch is going to
+// load the power-off save. Used to skip the splash fades.
+bool miyooShutdownResumeLikely();
 void miyooShutdownResumeFinished(bool loaded);
 
 // Tells whether the game loop (map screen) is running.
@@ -38,6 +42,20 @@ void miyooShutdownHandleInGame(MiyooShutdownSaveProc* save);
 // it is turned off outside the game loop (or the game loop is not reached
 // in time). Does not return in that case.
 void miyooShutdownPoll();
+
+// Loading boost: while the game loads (startup, saves, maps) the CPU governor
+// is switched to "performance" (each device keeps its own maximum clock), and
+// the original governor is put back afterwards. Nested calls are counted.
+// miyooBoostReset() restores it at once (menu or map waiting for input).
+// Only active under OnionOS; any failure is silent.
+void miyooBoostBegin();
+void miyooBoostEnd();
+void miyooBoostReset();
+
+struct MiyooBoostScope {
+    MiyooBoostScope() { miyooBoostBegin(); }
+    ~MiyooBoostScope() { miyooBoostEnd(); }
+};
 
 } // namespace fallout
 

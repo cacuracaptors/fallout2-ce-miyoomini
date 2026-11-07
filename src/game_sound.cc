@@ -32,6 +32,8 @@
 
 namespace fallout {
 
+void miyooBootLog(const char* tag); // TEMP-BOOTLOG
+
 typedef enum SoundEffectActionType {
     SOUND_EFFECT_ACTION_TYPE_ACTIVE,
     SOUND_EFFECT_ACTION_TYPE_PASSIVE,
@@ -211,6 +213,7 @@ int gameSoundInit()
         debugPrint("Initializing sound system...");
     }
 
+    miyooBootLog("snd: gameSoundInit start");
     if (_gsound_get_music_path(&_sound_music_path1, GAME_CONFIG_MUSIC_PATH1_KEY) != 0) {
         return -1;
     }
@@ -231,6 +234,7 @@ int gameSoundInit()
         return -1;
     }
 
+    miyooBootLog("snd: paths done");
     soundSetMemoryProcs(internal_malloc, internal_realloc, internal_free);
 
     // initialize direct sound
@@ -246,7 +250,9 @@ int gameSoundInit()
         debugPrint("success.\n");
     }
 
+    miyooBootLog("snd: soundInit done");
     audioInit(gameSoundIsCompressed);
+    miyooBootLog("snd: audioInit done");
 
     int cacheSize = settings.sound.cache_size;
     if (cacheSize >= 0x40000) {
@@ -269,6 +275,7 @@ int gameSoundInit()
         return -1;
     }
 
+    miyooBootLog("snd: cache+fileIO done");
     tickersAdd(_gsound_bkg_proc);
     gGameSoundInitialized = true;
 

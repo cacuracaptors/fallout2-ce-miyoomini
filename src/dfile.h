@@ -46,6 +46,16 @@ typedef struct DBase {
 
     // The head of linked list of open file handles.
     DFile* dfileHead;
+
+    // Miyoo Mini: a closed handle's stream of the .DAT is kept here and reused
+    // by the next [dfileOpen], saving an fopen/fclose pair per opened file.
+    FILE* spareStream;
+
+    // Miyoo Mini: bit table (one bit per hashed path, case insensitive) that
+    // tells quickly that a path is surely not in this archive. Every file
+    // open probes all the stacked archives and most probes miss.
+    unsigned char* missFilter;
+    unsigned int missFilterMask;
 } DBase;
 
 typedef struct DBaseEntry {
@@ -95,6 +105,14 @@ typedef struct DFile {
     // This value is only used when reading compressed streams. The range is
     // 0..entry->dataSize.
     int compressedBytesRead;
+
+    // Miyoo Mini: decompressed bytes read ahead from the inflate stream, so
+    // reading a text file character by character does not call [inflate] for
+    // every character. The bytes live in the second half of
+    // [decompressionBuffer]; [outPos] is the next unread byte and [outLen] the
+    // number of valid bytes.
+    int outPos;
+    int outLen;
 
     // The position in read stream.
     //

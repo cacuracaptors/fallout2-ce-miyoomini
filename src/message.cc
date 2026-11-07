@@ -46,7 +46,7 @@ struct MessageListRepositoryState {
 static bool _message_find(MessageList* msg, int num, int* out_index);
 static bool _message_add(MessageList* msg, MessageListItem* new_entry);
 static bool _message_parse_number(int* out_num, const char* str);
-static int _message_load_field(File* file, char* str);
+static int _message_load_field(const char** cursor, const char* end, char* str);
 
 static MessageList* messageListRepositoryLoad(const char* path);
 
@@ -249,22 +249,39 @@ bool messageListLoad(MessageList* messageList, const char* path)
         return false;
     }
 
+    // Miyoo Mini: the whole file is read at once and parsed from memory, as
+    // reading it one character at a time through the file layer is slow.
+    char* contents = nullptr;
+    size_t contentsLength = 0;
+    {
+        int fileSize = fileGetSize(file_ptr);
+        if (fileSize > 0) {
+            contents = (char*)internal_malloc(fileSize);
+            if (contents != nullptr) {
+                contentsLength = fileRead(contents, 1, fileSize, file_ptr);
+            }
+        }
+    }
+
+    const char* cursor = contents;
+    const char* contentsEnd = contents + contentsLength;
+
     entry.num = 0;
     entry.audio = audio;
     entry.text = text;
 
     while (1) {
-        rc = _message_load_field(file_ptr, num);
+        rc = _message_load_field(&cursor, contentsEnd, num);
         if (rc != 0) {
             break;
         }
 
-        if (_message_load_field(file_ptr, audio) != 0) {
+        if (_message_load_field(&cursor, contentsEnd, audio) != 0) {
             debugPrint("\nError loading audio field.\n", localized_path);
             goto err;
         }
 
-        if (_message_load_field(file_ptr, text) != 0) {
+        if (_message_load_field(&cursor, contentsEnd, text) != 0) {
             debugPrint("\nError loading text field.\n", localized_path);
             goto err;
         }
@@ -287,7 +304,11 @@ bool messageListLoad(MessageList* messageList, const char* path)
 err:
 
     if (!success) {
-        debugPrint("Error loading message file %s at offset %lx.", localized_path, static_cast<unsigned long>(fileTell(file_ptr)));
+        debugPrint("Error loading message file %s at offset %lx.", localized_path, static_cast<unsigned long>(cursor - contents));
+    }
+
+    if (contents != nullptr) {
+        internal_free(contents);
     }
 
     fileClose(file_ptr);
@@ -365,10 +386,12 @@ static bool _message_find(MessageList* msg, int num, int* out_index)
             return true;
         }
 
+        // Miyoo Mini: the original moved the bounds by one item instead of
+        // jumping to the middle, which made this a linear search.
         if (cmp > 0) {
-            l = l + 1;
+            l = mid + 1;
         } else {
-            r = r - 1;
+            r = mid - 1;
         }
     } while (r >= l);
 
@@ -379,6 +402,24 @@ static bool _message_find(MessageList* msg, int num, int* out_index)
     }
 
     return false;
+}
+
+// Miyoo Mini: the entries array is allocated in power-of-two steps (at least 8
+// items), so adding an entry to a big message list does not copy the whole
+// array every time. The allocated size is always a function of the number of
+// entries.
+static int _message_capacity(int count)
+{
+    if (count <= 0) {
+        return 0;
+    }
+
+    int capacity = 8;
+    while (capacity < count) {
+        capacity <<= 1;
+    }
+
+    return capacity;
 }
 
 // 0x484D68 message_add
@@ -400,19 +441,22 @@ static bool _message_add(MessageList* msg, MessageListItem* new_entry)
         }
     } else {
         if (msg->entries != nullptr) {
-            entries = (MessageListItem*)internal_realloc(msg->entries, sizeof(MessageListItem) * (msg->entries_num + 1));
-            if (entries == nullptr) {
-                return false;
-            }
+            int newCapacity = _message_capacity(msg->entries_num + 1);
+            if (newCapacity != _message_capacity(msg->entries_num)) {
+                entries = (MessageListItem*)internal_realloc(msg->entries, sizeof(MessageListItem) * newCapacity);
+                if (entries == nullptr) {
+                    return false;
+                }
 
-            msg->entries = entries;
+                msg->entries = entries;
+            }
 
             if (index != msg->entries_num) {
                 // Move all items below insertion point
                 memmove(&(msg->entries[index + 1]), &(msg->entries[index]), sizeof(MessageListItem) * (msg->entries_num - index));
             }
         } else {
-            msg->entries = (MessageListItem*)internal_malloc(sizeof(MessageListItem));
+            msg->entries = (MessageListItem*)internal_malloc(sizeof(MessageListItem) * _message_capacity(1));
             if (msg->entries == nullptr) {
                 return false;
             }
@@ -481,7 +525,7 @@ static bool _message_parse_number(int* out_num, const char* str)
 // 4 - limit exceeded (> `MESSAGE_LIST_ITEM_FIELD_MAX_SIZE`)
 //
 // 0x484FB4 message_load_field
-static int _message_load_field(File* file, char* str)
+static int _message_load_field(const char** cursor, const char* end, char* str)
 {
     int ch;
     int len;
@@ -489,10 +533,10 @@ static int _message_load_field(File* file, char* str)
     len = 0;
 
     while (1) {
-        ch = fileReadChar(file);
-        if (ch == -1) {
+        if (*cursor >= end) {
             return 1;
         }
+        ch = (unsigned char)*(*cursor)++;
 
         if (ch == '}') {
             debugPrint("\nError reading message file - mismatched delimiters.\n");
@@ -505,12 +549,11 @@ static int _message_load_field(File* file, char* str)
     }
 
     while (1) {
-        ch = fileReadChar(file);
-
-        if (ch == -1) {
+        if (*cursor >= end) {
             debugPrint("\nError reading message file - EOF reached.\n");
             return 3;
         }
+        ch = (unsigned char)*(*cursor)++;
 
         if (ch == '}') {
             *(str + len) = '\0';
