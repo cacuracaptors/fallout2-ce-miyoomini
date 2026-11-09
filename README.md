@@ -412,7 +412,12 @@ The final ARM (armhf) binary `fallout2-ce` will be in `build/`.
 
 ## License
 
-The source code in this repository is available under the [Sustainable Use License](https://github.com/cacuracaptors/fallout2-ce-miyoomini/blob/main/LICENSE.md).
+This port is based on fallout2-ce (FOR:CE), which is under the **Sustainable Use License** (see `LICENSE.md`): use
+and distribution are free for non-commercial purposes, provided the original copyright notices are kept intact.
+That covers the program as a whole and the changes made for the Miyoo Mini inside its files.
+
+The files written from scratch for this port are also available under the MIT License (see `LICENSE-MIT`):
+`src/miyoo_shutdown.cc`, `src/miyoo_shutdown.h`, `toolchain-miyoomini.cmake` and `cmake_miyoo/FindSDL2.cmake`.
 
 ## AI-Assisted
 
