@@ -216,6 +216,13 @@ MHz. It is set once, when the game opens; there is no option to change it.
 
 ## Changelog
 
+- **v1.3.2** - Fixed the game not starting after copying a PC installation with the Restoration
+  Project (RPU) or other mods: the `f2_res.ini` that comes with them is set up for a PC screen
+  (1024x768, for example), and since v1.3.0 the game copied those settings into `fallout2.cfg`,
+  but this handheld's screen is always 640x480. The port now ignores the screen settings in
+  `f2_res.ini`, and if an earlier version already copied them, it sets them back to the defaults
+  the next time it starts, so you don't need to delete any file. The rest of your `fallout2.cfg`
+  is kept as it was.
 - **v1.3.1** - The CPU clock is now set automatically for the device model: 1800 MHz on the
   Miyoo Mini Plus and 1600 MHz on the other Mini models, which do not hold 1800 MHz. The in-game
   Quick Guide now shows the v1.3.0 controls (Select as Esc, Menu key as

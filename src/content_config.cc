@@ -17,7 +17,8 @@ void contentConfigInit()
 
     // Try to migrate some settings from legacy config files.
     contentConfigTryMigrateFromSfall(kConfigPatchPath);
-    contentConfigTryMigrateFromF2Res(kConfigPatchPath);
+    // Miyoo Mini: the screen is always 640x480, so the main menu settings of
+    // f2_res.ini (made for a PC screen) are not copied.
 
     if (!configInit(&gContentConfig)) {
         return;

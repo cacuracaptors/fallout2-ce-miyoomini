@@ -88,6 +88,41 @@ static void gameConfigRecordCommandLineOverride(const char* section, const char*
 // Finally, this function merges key-value pairs from [argv] if any, see
 // [configParseCommandLineArguments] for expected format.
 //
+// Miyoo Mini: the screen is always 640x480. Puts the defaults back in the
+// settings of a bigger screen (the ones FOR:CE copies from f2_res.ini, the PC
+// hi-res patch that RPU installs) when fallout2.cfg asks for another
+// resolution. With 1024x768 the game cannot open its screen and quits.
+static bool miyooResetPcScreenSettings(Config* config)
+{
+    int width = 640;
+    int height = 480;
+    configGetInt(config, GAME_CONFIG_SCREEN_KEY, GAME_CONFIG_RESOLUTION_X_KEY, &width);
+    configGetInt(config, GAME_CONFIG_SCREEN_KEY, GAME_CONFIG_RESOLUTION_Y_KEY, &height);
+    if (width == 640 && height == 480) {
+        return false;
+    }
+
+    const Settings defaults;
+    configSetInt(config, GAME_CONFIG_SCREEN_KEY, GAME_CONFIG_RESOLUTION_X_KEY, defaults.screen.resolution_x);
+    configSetInt(config, GAME_CONFIG_SCREEN_KEY, GAME_CONFIG_RESOLUTION_Y_KEY, defaults.screen.resolution_y);
+    configSetInt(config, GAME_CONFIG_SCREEN_KEY, GAME_CONFIG_WINDOWED_KEY, static_cast<int>(defaults.screen.windowed));
+    configSetInt(config, GAME_CONFIG_SCREEN_KEY, GAME_CONFIG_SCALE_KEY, defaults.screen.scale);
+    configSetInt(config, GAME_CONFIG_UI_KEY, GAME_CONFIG_MAIN_MENU_SCALE_MODE_KEY, defaults.ui.main_menu_scale_mode);
+    configSetInt(config, GAME_CONFIG_UI_KEY, GAME_CONFIG_IFACE_BAR_MODE_KEY, defaults.ui.iface_bar_mode ? 1 : 0);
+    configSetInt(config, GAME_CONFIG_UI_KEY, GAME_CONFIG_IFACE_BAR_WIDTH_KEY, defaults.ui.iface_bar_width);
+    configSetInt(config, GAME_CONFIG_UI_KEY, GAME_CONFIG_IFACE_BAR_SIDE_ART_KEY, defaults.ui.iface_bar_side_art);
+    configSetInt(config, GAME_CONFIG_UI_KEY, GAME_CONFIG_IFACE_BAR_SIDES_ORI_KEY, defaults.ui.iface_bar_sides_ori ? 1 : 0);
+    configSetInt(config, GAME_CONFIG_UI_KEY, GAME_CONFIG_IGNORE_SCROLL_LIMIT_KEY, defaults.ui.ignore_scroll_limit ? 1 : 0);
+    configSetInt(config, GAME_CONFIG_UI_KEY, GAME_CONFIG_ALTERNATE_AMMO_METER_KEY, defaults.ui.alternate_ammo_meter);
+    configSetInt(config, GAME_CONFIG_UI_KEY, GAME_CONFIG_IGNORE_MAP_EDGES_KEY, defaults.ui.ignore_map_edges ? 1 : 0);
+    configSetInt(config, GAME_CONFIG_UI_KEY, GAME_CONFIG_SPLASH_SCREEN_SIZE_KEY, defaults.ui.splash_screen_size);
+    configSetInt(config, GAME_CONFIG_UI_KEY, GAME_CONFIG_DEATH_SCREEN_SIZE_KEY, defaults.ui.death_screen_size);
+    configSetInt(config, GAME_CONFIG_UI_KEY, GAME_CONFIG_END_SLIDE_SIZE_KEY, defaults.ui.end_slide_size);
+    configSetInt(config, GAME_CONFIG_UI_KEY, GAME_CONFIG_MOVIE_ASPECT_FIT_KEY, defaults.ui.movie_aspect_fit ? 1 : 0);
+    configSetString(config, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_F2_RES_DAT_KEY, defaults.system.f2_res_dat_path.c_str());
+    return true;
+}
+
 // 0x444570 gconfig_init
 bool gameConfigInit(bool isMapper, int argc, char** argv)
 {
@@ -156,8 +191,11 @@ bool gameConfigInit(bool isMapper, int argc, char** argv)
 
     debugPrint("Game config loaded from %s.\n", gGameConfigFilePath);
 
-    if (!isMapper && gameConfigMigrateFromF2Res(gGameConfigFilePath, &gGameConfig)) {
-        debugPrint("Migrated settings from f2_res.ini.\n");
+    // Miyoo Mini: the screen is always 640x480, so the settings of f2_res.ini
+    // (made for a PC screen) are not copied here, and the ones copied by
+    // v1.3.0 and v1.3.1 of this port go back to their defaults.
+    if (!isMapper && miyooResetPcScreenSettings(&gGameConfig)) {
+        debugPrint("Miyoo Mini: screen settings made for a PC screen set back to the defaults.\n");
         configWriteEx(&gGameConfig, gGameConfigFilePath, ConfigFlags::RetainAll);
     }
 
